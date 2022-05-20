@@ -66,13 +66,25 @@ def tnoStamp(ra, dec, imap, width = 0.5):
     return stamp
 
 class OrbitInterpolator:
+    '''
+    Constructs a class that can predict, using an interpolation scheme, the location of an object given an identifier and time
+    '''
     def __init__(self, table):
+        '''
+        Requires a table generated from astroquery, querying JPL HORIZONS. The 
+        interpolation is done automatically, but, of course, only works
+        if the table is sampled densely enough and in the time range for which
+        the positions were queried
+        '''
         self.table = table
         self.targets = np.unique(table['targetname'])
 
         self._construct_dictionary()
 
     def _interpolate_radec(self, target):
+        '''
+        "Hidden" function that constructs the interpolations for each target
+        '''        
         table = self.table[self.table['targetname'] == target]
         zero = np.min(table['datetime_jd'])
         ra_interp = interp1d(table['datetime_jd'] - zero, table['RA'])
@@ -82,6 +94,9 @@ class OrbitInterpolator:
         return zero, ra_interp, dec_interp, delta_interp
 
     def _construct_dictionary(self):
+        '''
+        "Hidden" function that creates the look-up dictionary of targets for simplicity of usage
+        '''
         self.obj_dic = {}
             
         for j,i in enumerate(self.targets):
@@ -94,6 +109,10 @@ class OrbitInterpolator:
             self.obj_dic[i]['delta'] = delta
 
     def get_radec_dist(self, target, time):
+        '''
+        Specifying a target name (see self.obj_dic.keys() for a list of targets) and a time (in JD), finds
+        the interpolated RA and Dec for the objects
+        '''
         time = time + 2400000.5
         
         t_intep = time - self.obj_dic[target]['zero']
@@ -103,6 +122,54 @@ class OrbitInterpolator:
         dist = self.obj_dic[target]['delta'](t_intep)
 
         return ra, dec, dist
+
+class QueryHorizons:
+    '''
+    Constructs a class that can query a bunch of positions for objects from JPL-Horizons given a set of times and an observatory location
+    '''
+
+    def __init__(self, time_start, time_end, observer_location, step = '1d'):
+        '''
+        Initialization function
+
+        Arguments:
+        - time_start: start time for the query, should be in MJD
+        - time_end: end time for the query, should be in MJD
+        - observer_location: location of the observer
+        - step: time step for the ephemeris
+        The simples way to get the observer location variable is via the
+        list of IAU observatory codes: https://en.wikipedia.org/wiki/List_of_observatory_codes
+        
+        Custom locations are also accepted by JPL
+        '''
+        t_st = Time(time_start, format='mjd')
+        self.time_start = t_st.utc.iso  
+        t_en = Time(time_end, format='mjd')
+        self.time_end = t_en.utc.iso 
+        
+        self.observer = observer_location
+
+        self.step = step 
+
+
+    def queryObjects(self, objects):
+        '''
+        Returns a table (and saves it on the object as well) for the provided list of objects
+        '''
+        self.table = [] 
+
+        for i in objects:
+            query = Horizons(id = i, location = self.observer, 
+                epochs = {'start' : self.time_start, 'stop' : self.time_end, 'step' : self.step})
+
+            eph = query.ephemerides()
+
+            self.table.append(eph['RA', 'DEC', 'datetime_jd', 'targetname', 'delta', 'r'])
+        
+        self.table = tb.vstack(self.table)
+
+        return self.table
+
 
 def tnoStacker(oribits, obj):
     #Returns a stack over ~~~1~~~ objects orbit
