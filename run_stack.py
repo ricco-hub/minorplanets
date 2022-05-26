@@ -128,6 +128,7 @@ class QueryHorizons:
     Constructs a class that can query a bunch of positions for objects from JPL-Horizons given a set of times and an observatory location
     '''
 
+
     def __init__(self, time_start, time_end, observer_location, step = '1d'):
         '''
         Initialization function
