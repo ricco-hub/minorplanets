@@ -183,17 +183,19 @@ class QueryHorizons:
         return self.table
 
 
-def tnoStacker(oribits_obj, obj):
+def tnoStacker(oribits_obj, obj, freq, arr):
     #Returns a stack over ~~~1~~~ objects orbit
     
-    #Inputs, orbits, and OrbitInterpolator instance, which contains all the orits of interest, i.e. for multiple objects
+    #Inputs, orbits, and OrbitInterpolator instance, which contains all the orbits of interest, i.e. for multiple objects
     #obj, the name/id of the object of interest
+    #freq, the frequency the depth1 array is on    
+    #array, the ACT array we are interested in    
     
     #Path to the maps. Probably shouldn't be hard coded
    
     print('stacking on ', str(obj))
     
-    #depth-1 maps, getting division by zero error for Ceres and Sylvia but not for planet 9 maps
+    #depth-1 maps
     path = '/home/r/rbond/sigurdkn/project/actpol/maps/depth1/release/' 
     
     #Initialize stack/divisor
@@ -207,31 +209,27 @@ def tnoStacker(oribits_obj, obj):
 
 
     #we're now going to check each directory in the path, each of which corresponds to one
-    #~3 day coadd        
-    #print(list(enumerate((os.listdir(path=path)))))        
+    #~3 day coadd                  
     for i, dirname in enumerate(os.listdir(path=path)):
-        #if i>10: break
-        print('In dir ', dirname)        
-        print("i, dirname", i, dirname)                             
+        #if i>10: break   
+        print("I'm working in dir ", dirname)                           
         try:     
-            hdf_file = glob.glob(path + dirname + "/*.hdf")                                 
-            #print(hdf_file[i])            
-            with h5py.File(hdf_file[i], "r") as hfile: 
-            #with h5py.File(path + dirname + "/depth1_1500101415_pa4_f220_info.hdf", "r") as hfile:  #works!                                                       
-                print("I'm working on it...")                               
-                #Find the (rough) mjd center of the map
-                #mjd_cent = hfile["t"][()] #something wrong with this, changed from "mjd" to "t" in first bracket, convert Unix to mjd???
-                unix_cent = hfile["t"][()] 
-                mjd_cent = Time(unix_cent, format='unix').mjd
-                isot_time = Time(unix_cent, format='unix').isot
-                #print("mjd_cent ", mjd_cent)                                                
-                print("Readable time ", isot_time)                
+            hdf_file = glob.glob(path + dirname + "/*" + "_" + arr + "_" + freq + "_info.hdf")                               
+            #print(hdf_file)
+            for h in hdf_file:                        
+                with h5py.File(h, "r") as hfile:                                                                                       
+                    #Find the (rough) mjd center of the map
+                    unix_cent = hfile["t"][()] 
+                    mjd_cent = Time(unix_cent, format='unix').mjd
+                    isot_time = Time(unix_cent, format='unix').isot
+                    #print("mjd_cent ", mjd_cent)                                                
+                    #print("Readable time ", isot_time)                
                 
                 
                 
         except:
-            print('no info file in ', dirname)
-            continue#break
+            print('No info file in ', dirname)
+            continue
         #Get the ra/dec of the object, as well as delta, the geocentric distance to the object
         #We use geocentric as we're looking at the IR emission, which scales as r**2 the distance
         #from the obj to earth. If we were looking at reflected sunlight, we'd care about the heliocentric
@@ -239,22 +237,17 @@ def tnoStacker(oribits_obj, obj):
 
         #Get wcs info from the kmap for this 3day coadd: for sigurd's maps the kmap and 
         #frhs map wcs info will be the same
-        ivar_file = glob.glob(path + dirname + "/*ivar.fits")
-        print("length of ivar_file ", len(ivar_file))                         
-        hdu = fits.open(ivar_file[i])            
-        w = wcs.WCS(hdu[0].header) #might have to change this???
-        
-        #Find pixel corresponding to our ra/dec. I actually can no longer recall why
-        #I did this and it doesn't seem to do anything so it could probably be
-        #removed
-        #c = SkyCoord(ra, dec, unit="deg")
-        #x, y = w.world_to_pixel(c)
+        ivar_file = glob.glob(path + dirname + "/*" + "_" + arr + "_" + freq + "_ivar.fits")
+        for var in ivar_file:                             
+          hdu = fits.open(var)            
+          w = wcs.WCS(hdu[0].header) #might have to change this???
         
         #Read in the maps and take the stamp using tnoStamp
-        kmap = enmap.read_map(ivar_file[i]) 
+          kmap = enmap.read_map(var) 
         try:
-            map_file = glob.glob(path + dirname + "/*map.fits")         
-            frhs = enmap.read_map(map_file[i]) 
+            map_file = glob.glob(path + dirname + "/*" + "_" + arr + "_" + freq + "_map.fits")          
+            for maps in map_file:            
+              frhs = enmap.read_map(maps) 
         except:
             print('frhs too big')
             continue
@@ -290,7 +283,7 @@ class minorplanet():
     '''
     Constructs a class that includes everything we want to do with a minor planet
     '''
-    def __init__(self, name, obs = 'W99', t_start ='2010-01-01T00:00:00', t_end='2022-01-01T00:00:00'): #changed from 2020 to 2022
+    def __init__(self, name, frequency, array, obs = 'W99', t_start ='2010-01-01T00:00:00', t_end='2022-01-01T00:00:00'): #changed from 2020 to 2022
         '''
         Requires a name for the object, as well as an observatory code which can be found at
         https://en.wikipedia.org/wiki/List_of_observatory_codes
@@ -308,6 +301,12 @@ class minorplanet():
                                        observer_location=obs, step = '1d').queryObjects([str(self.name)])
         
         self.interp_orbit = OrbitInterpolator(self.eph_table)
+        
+        #frequency of depth1 map we want to look at
+        self.freq = frequency        
+        
+        #ACT array    
+        self.arr = array            
         
     
     def show_orbit(self, t_orb_start = '2013-01-01T00:00:00', t_orb_end = '2022-01-01T00:00:00', #changed from 2020 to 2022 
@@ -334,11 +333,11 @@ class minorplanet():
         plt.show()
         plt.close()
         
-    def make_stack(self):
-        self.flux_stack, self.fstack, self.kstack, self.flux_scale = tnoStacker(self.interp_orbit,self.eph_table['targetname'][0])
+    def make_stack(self):            
+        self.flux_stack, self.fstack, self.flux_scale = tnoStacker(self.interp_orbit,self.eph_table['targetname'][0], self.freq, self.arr) #self.kstack,
 
     def save_stack(self, directory):
-        aster_dict = {'flux_stack':self.flux_stack, 'fstack':self.fstack, 'kstack':self.kstack, 'flux_scale':self.flux_scale}
+        aster_dict = {'flux_stack':self.flux_stack, 'fstack':self.fstack, 'flux_scale':self.flux_scale} #'kstack':self.kstack,
         with open(directory+'{}_stamp.pk'.format(str(self.eph_table['targetname'][0]).replace(' ', '_').replace('(','').replace(')','')), 'wb') as f:
             pk.dump(aster_dict, f)
             
@@ -347,13 +346,13 @@ class minorplanet():
         plt.xlabel('ra')
         plt.ylabel('dec')
                 
-        plt.title('Plot of {} Stack'.format(self.eph_table['targetname'][0]))
+        plt.title('Plot of {name} Depth-1 Stack at {freq} on {arr}'.format(name = self.eph_table['targetname'][0], freq = self.freq, arr = self.arr))
         if directory is not None:
             plt.savefig(directory + '{}_stamp.pdf'.format(str(self.eph_table['targetname'][0]).replace(' ', '_').replace('(','').replace(')','')))
         plt.show()
 
 #generate and save plot for asteroid/minor planet
-asteroid = minorplanet('Ceres')
+asteroid = minorplanet("Ceres", "f090", "pa5")
 asteroid.make_stack()
 asteroid.save_stack('/scratch/r/rbond/ricco/plottest/pks/')
-asteroid.plot_stack(directory = '/scratch/r/rbond/ricco/plottest/plots/')
+asteroid.plot_stack(directory = '/scratch/r/rbond/ricco/plottest/plots/Depth1/')
