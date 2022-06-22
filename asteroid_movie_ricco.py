@@ -93,7 +93,7 @@ site_pos = np.array([site.lon,site.lat])*utils.degree
 time_tol  = 60
 time_sane = 3600*24
 
-ifiles  = sum([sorted(utils.glob(ifile)) for ifile in args.ifiles],[]) #change utils.glob() to glob.glob() to fix error
+ifiles  = sum([sorted(utils.glob(ifile)) for ifile in args.ifiles],[]) 
 #print("ifiles:", ifiles) #use map.fits files
 info    = np.load(args.astinfo).view(np.recarray)#bunch.read 
 # see https://phy-act1.princeton.edu/~snaess/actpol/ephemerides/
@@ -114,10 +114,10 @@ ang_diam = info["ang"]
 orbit = interpolate.interp1d(ctime, [ra, dec, dist], kind = 3) #test modeling original orbit code, think this might be correct
 #not sure this is right
 #orbit   = interpolate.interp1d(ctime, [utils.unwind(ra*utils.degree), dec*utils.degree, dist], kind=3) #modeling example usage from Sigurd 
-y = orbit(ctime)
-plt.scatter(y[0],y[1])
-plt.show()
-plt.close()
+#y = orbit(ctime)
+#plt.scatter(y[0],y[1])
+#plt.show()
+#plt.close()
 
 
 # For a typical asteroid I can be off by O(5 arcmin) by using the central
@@ -180,7 +180,7 @@ for fi in range(comm.rank, len(ifiles), comm.size):
       print(colors.white + message + " time" + colors.reset)
       continue
 	# Now that we have the proper time, get the asteroids actual position
-  adata    = orbit(ctime + 1604016280) #NEED TO FIX THIS + 1804016280
+  adata    = orbit(ctime) #NEED TO FIX THIS + 1604016280
   ast_pos  = utils.rewind(adata[1::-1]*utils.degree)
 	# optionally transform to topocentric here. ~0.1 arcmin effect
   thumb_box = make_box(ast_pos, r_thumb)
@@ -210,7 +210,7 @@ for fi in range(comm.rank, len(ifiles), comm.size):
 #print("ra: %8.3f, dec: %7.3f, r: %6.3f" % (utils.rewind(pos[0])/utils.degree, pos[1]/utils.degree, pos[2]))
 # ra:  -24.336, dec: -23.866, r:  2.466
 
-#fSigurd's format to run script:
+#Sigurd's format to run script:
 # python asteroid_movie.py bright_ephem.hdf ceres "out/big/*/*pa?_f[01]??*map.fits" asteroids/ceres
-# my format to run script:
+#my format to run script:
 # python asteroid_movie_ricco.py /gpfs/fs0/project/r/rbond/sigurdkn/actpol/ephemerides/objects/Ceres.npy ceres /home/r/rbond/sigurdkn/project/actpol/maps/depth1/release/15999/*pa5_f150_map.fits asteroids/ceres 
