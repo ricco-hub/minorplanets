@@ -1,5 +1,6 @@
 import argparse, os
 #query for files, asteroid, etc.
+#check bottom of code for format
 parser = argparse.ArgumentParser()
 parser.add_argument("astinfo") #Ephemerides file
 parser.add_argument("name") #name,string
@@ -48,11 +49,11 @@ def calc_obs_ctime(orbit, tmap, ctime0):
 		ctime = ctime0+x
 		try:
 			adata = orbit(ctime)
-			mtime = tmap.at(adata[1::-1]*utils.degree, order=1)
+			mtime = tmap.at(adata[1::-1], order=1)
 		except ValueError:
 			mtime = 0
 		return (mtime-ctime)**2
-	ctime = optimize.fmin_powell(calc_chisq, 0, disp=False)+ctime0 #[0] see original script
+	ctime = optimize.fmin_powell(calc_chisq, 0, disp=False)+ctime0 #[0]
 	err   = calc_chisq(ctime-ctime0)**0.5
 	return ctime, err
 
@@ -94,113 +95,69 @@ time_tol  = 60
 time_sane = 3600*24
 
 ifiles  = sum([sorted(utils.glob(ifile)) for ifile in args.ifiles],[]) 
-#print("ifiles:", ifiles) #use map.fits files
-info    = np.load(args.astinfo).view(np.recarray)#bunch.read 
-# see https://phy-act1.princeton.edu/~snaess/actpol/ephemerides/
-#[("ctime","d"),("ra","d"),("dec","d"),("r","d"),("rsun","d"),("ang","d")]
-
-#orbdata = recfunctions.structured_to_unstructured(info[args.name.capitalize()]).T # [{mjd,ra,dec,dist},npoint] 
-# Spline the orbit
-#orbit   = interpolate.interp1d(utils.mjd2ctime(orbdata[0]), orbdata[1:], kind=3)
-ctime = info["ctime"]
-ra = info["ra"]
-dec = info["dec"]
-dist = info["r"] #distance from us, AU
-sun_dist = info["rsun"]
-ang_diam = info["ang"]
-
-#orbdata = [ctime, ra, dec, r]
-
-orbit = interpolate.interp1d(ctime, [ra, dec, dist], kind = 3) #test modeling original orbit code, think this might be correct
-#not sure this is right
-#orbit   = interpolate.interp1d(ctime, [utils.unwind(ra*utils.degree), dec*utils.degree, dist], kind=3) #modeling example usage from Sigurd 
-#y = orbit(ctime)
-#plt.scatter(y[0],y[1])
-#plt.show()
-#plt.close()
-
-
-# For a typical asteroid I can be off by O(5 arcmin) by using the central
-# ctime instead of the ctime when the object was actually observed.
-# This is good enough for the quick bounding box check, but it's not
-# good enough for centering the object properly. What I should do is
-# read in the time map, and find at which point the asteroid's
-# (ctime,ra,dec) intersects the time map. This could be done by
-# making
-# calc_chisq(ctime):
-#  adata = orbit(ctime)
-#  mtime = time_map.at(adata[1::-1]*utils.degree, order=1)
-#  return (ctime-mtime)**2
-# and minimizing it using fmin_powell
-
-
+info    = np.load(args.astinfo).view(np.recarray)
+orbit   = interpolate.interp1d(info.ctime, [utils.unwind(info.ra*utils.degree), info.dec*utils.degree, info.r, info.ang*utils.arcsec], kind=3)
 utils.mkdir(args.odir)
 
-for fi in range(comm.rank, len(ifiles), comm.size):	  
-  ifile = ifiles[fi]  
-  infofile = utils.replace(ifile, "map.fits", "info.hdf")
-  tfile    = utils.replace(ifile, "map.fits", "time.fits")
-  ofname   = "%s/%s_%s" % (args.odir, args.name, os.path.basename(ifile))
-  info     = bunch.read(infofile)
-	#if info.t < 1606412474: continue
+for fi in range(comm.rank, len(ifiles), comm.size):		
+	ifile    = ifiles[fi]
+	infofile = utils.replace(ifile, "map.fits", "info.hdf")
+	tfile    = utils.replace(ifile, "map.fits", "time.fits")
+	ofname   = "%s/%s_%s" % (args.odir, args.name, os.path.basename(ifile))
+	info     = bunch.read(infofile)
 	# Get the asteroid coordinates
-  ctime0   = np.mean(info.period)
-  adata0   = orbit(ctime0)
-  ast_pos0 = utils.rewind(adata0[1::-1]*utils.degree)
-	#geo_pos  = utils.rewind(adata[:2]*utils.degree)
-	#ast_pos, ast_dist = geocentric_to_site(geo_pos, adata[2]*utils.AU, site_pos, site.alt, ctime)
-	#ast_pos   = ast_pos[::-1]
-	#ast_dist /= utils.AU
-  message  = "%.0f  %8.3f %8.3f  %8.3f %8.3f %8.3f %8.3f" % (info.t, ast_pos0[1]/utils.degree, ast_pos0[0]/utils.degree, info.box[0,1]/utils.degree, info.box[1,1]/utils.degree, info.box[0,0]/utils.degree, info.box[1,0]/utils.degree)
+	ctime0   = np.mean(info.period)
+	adata0   = orbit(ctime0)
+	ast_pos0 = utils.rewind(adata0[1::-1])
+	message  = "%.0f  %8.3f %8.3f  %8.3f %8.3f %8.3f %8.3f" % (info.t, ast_pos0[1]/utils.degree, ast_pos0[0]/utils.degree, info.box[0,1]/utils.degree, info.box[1,1]/utils.degree, info.box[0,0]/utils.degree, info.box[1,0]/utils.degree)
 	# Check if we're in bounds
-  if not in_box(info.box, ast_pos0):
-    if verbose >= 3:
-      print(colors.lgray + message + " outside" + colors.reset)
-      continue
+	if not in_box(info.box, ast_pos0):
+		if verbose >= 3:
+			print(colors.lgray + message + " outside" + colors.reset)
+			continue
 	# Ok, should try to read in this map. Decide on
 	# bounding box to read in
-  full_box  = make_box(ast_pos0, r_full)
+	full_box  = make_box(ast_pos0, r_full)
 	# Read it and check if we have enough hits in the area we want to use
-  try:
-	  tmap = enmap.read_map(tfile, box=full_box)
-	  tmap[tmap!=0] += info.t
-  except (TypeError, FileNotFoundError):
-	  print("Error reading %s. Skipping" % ifile)
-	  continue
+	try:
+		tmap = enmap.read_map(tfile, box=full_box)
+		tmap[tmap!=0] += info.t
+	except (TypeError, FileNotFoundError):
+		print("Error reading %s. Skipping" % ifile)
+		continue
 	# Break out early if nothing is hit
-  if np.all(tmap == 0):
-    if verbose >= 2: 
-      print(colors.white + message + " unhit" + colors.reset)
-      continue
+	if np.all(tmap == 0):
+		if verbose >= 2: 
+			print(colors.white + message + " unhit" + colors.reset)
+			continue
 	# Figure out what time the asteroid was actually observed
-  ctime, err = calc_obs_ctime(orbit, tmap, ctime0) #ctime is too small 10^-6 small
-  print("ctime: ", ctime)  
-  if err > time_tol or abs(ctime-ctime0) > time_sane:
-    if verbose >= 2: 
-      print(colors.white + message + " time" + colors.reset)
-      continue
+	ctime, err = calc_obs_ctime(orbit, tmap, ctime0) #ctime is too small 10^-6 small
+	if err > time_tol or abs(ctime-ctime0) > time_sane:
+		if verbose >= 2:
+			print(colors.white + message + " time" + colors.reset)
+		continue
 	# Now that we have the proper time, get the asteroids actual position
-  adata    = orbit(ctime) #NEED TO FIX THIS + 1604016280
-  ast_pos  = utils.rewind(adata[1::-1]*utils.degree)
+	adata    = orbit(ctime) 
+	ast_pos  = utils.rewind(adata[1::-1])
 	# optionally transform to topocentric here. ~0.1 arcmin effect
-  thumb_box = make_box(ast_pos, r_thumb)
+	thumb_box = make_box(ast_pos, r_thumb)
 	# Read the actual data
-  try:
-	  imap = enmap.read_map(ifile, box=full_box)
-  except (TypeError, FileNotFoundError):
-	  print("Error reading %s. Skipping" % ifile)
-	  continue
-  if np.mean(imap.submap(thumb_box) == 0) > args.tol:
-    if verbose >= 2: 
-      print(colors.white + message + " unhit" + colors.reset)
-      continue
+	try:
+		imap = enmap.read_map(ifile, box=full_box)
+	except (TypeError, FileNotFoundError):
+		print("Error reading %s. Skipping" % ifile)
+		continue
+	if np.mean(imap.submap(thumb_box) == 0) > args.tol:
+		if verbose >= 2: 
+			print(colors.white + message + " unhit" + colors.reset)
+			continue
 	# Filter the map
-  wmap     = filter_map(imap, lknee=lknee, alpha=alpha, beam=beam)
+	wmap     = filter_map(imap, lknee=lknee, alpha=alpha, beam=beam)
 	# And reproject it
-  omap = reproject.thumbnails(wmap, ast_pos, r=r_thumb)
-  enmap.write_map(ofname, omap)
-  if verbose >= 1: 
-    print(colors.lgreen + message + " ok" + colors.reset)
+	omap = reproject.thumbnails(wmap, ast_pos, r=r_thumb)
+	enmap.write_map(ofname, omap)
+	if verbose >= 1: 
+		print(colors.lgreen + message + " ok" + colors.reset)
  
 #test works
 #eph   = np.load("/gpfs/fs0/project/r/rbond/sigurdkn/actpol/ephemerides/objects/Ceres.npy").view(np.recarray)
