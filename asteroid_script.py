@@ -5,6 +5,10 @@ from pixell import utils, enmap, bunch, reproject, colors, coordinates, mpi
 from scipy import interpolate, optimize
 import glob
 import matplotlib.pyplot as plt
+from astropy.visualization import astropy_mpl_style
+plt.style.use(astropy_mpl_style)
+from astropy.utils.data import get_pkg_data_filename
+from astropy.io import fits
 
 def in_box(box, point): #checks if points are inside box or not
 	box   = np.asarray(box)
@@ -91,7 +95,7 @@ def make_movie(astinfo, name, arr, freq, odir, rad=10.0, pad=30.0, tol=0.0, lkne
     
   
   Output:
-    map.fits file of object name on array arr at frequency freq in directory odir
+    map.fits, type: file, file of object name on array arr at frequency freq in directory odir
   '''
   
   #path of depth1 maps
@@ -190,11 +194,93 @@ def make_movie(astinfo, name, arr, freq, odir, rad=10.0, pad=30.0, tol=0.0, lkne
 def flux():
   pass 
 
-def make_image():
-  pass 
+def make_image(path, name, arr, freq, directory = None):
+  '''
+  Input:
+    path, type: string, path to map.fits file
+    name, type: string, name of object to plot
+    arr, type: string, array ACT is on
+    freq, type: string, frequency of map
+    directory, type: string, path to save image file
+    
+  Output: 
+    Image, plot of individual name on array arr at frequency freq
+  '''
   
+  #get data from path
+  image_file = get_pkg_data_filename(path)
+  image_data = fits.getdata(image_file, ext=0)
+  
+  #create plot
+  plt.figure()
+  plt.title("Plot of {name} on {arr} at {freq}".format(name=name, arr=arr, freq=freq))
+  plt.imshow(image_data[0, :, :])
+  
+  if directory is not None: 
+    plt.savefig(directory + "{name}_image_{arr}_{freq}.pdf".format(name=name, arr=arr, freq=freq))
+    
+  plt.colorbar()
+  plt.show()
+  
+def make_gallery(name, arr, freq, directory = None):
+  '''
+  Inputs:
+    name, type: string, name of object we want
+    arr, type: string, array ACT is on
+    freq, type: string, frequency we are interested in
+    directory, type: string, path to store image
+    
+  Output:
+    Image, gallery of depth1 images for object name on array arr at frequency freq
+  '''
+  
+  path = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroid/" + name + "/" + freq
+  
+  for i, dirname in enumerate(os.listdir(path = path)):
+    #array of paths to map files
+    map_files = glob.glob(path + "/*" + arr + "_" + freq + "_map.fits") 
+  
+  all_image_files = []    
+  for files in map_files:
+    image_file = get_pkg_data_filename(files)
+    all_image_files.append(image_file)
+      
+      
+  count = 0
+  #based on length of all_image_files
+  #proabably a better way to extract dimensions
+  #for rows and cols
+  rows = 9
+  cols = 15
+  fig, axarr = plt.subplots(rows, cols, figsize=(9,6))
+    
+  #plot at each index in all_image_files  
+  for i in range(rows):
+    for j in range(cols):
+      ax = axarr[i,j]
+      
+      #build image
+      image_data = fits.getdata(all_image_files[count], ext=0)
+      count += 1
+      
+      #plot
+      im = ax.imshow(image_data[0, :, :], vmin=-2000, vmax=8000)
+      ax.get_xaxis().set_visible(False)
+      ax.get_yaxis().set_visible(False)
+      
+  plt.colorbar(im, ax=axarr[:, :])
+  plt.show()
+  
+  if directory is not None:
+    fig.savefig(directory + "{name}_gallery_{arr}_{freq}.pdf".format(name=name, arr=arr, freq=freq))  
+  
+################################***RUN THINGS BELOW***##################################################################################################
 #path to desired object
-astinfo = "/gpfs/fs0/project/r/rbond/sigurdkn/actpol/ephemerides/objects/Vesta.npy"
+astinfo = "/gpfs/fs0/project/r/rbond/sigurdkn/actpol/ephemerides/objects/Ceres.npy"
 #make sure to update with same name and astinfo
 #make sure to change odir to correct name and freq
-make_movie(astinfo, "vesta", "pa5", "f090", "asteroid/vesta/f090")
+#make_movie(astinfo, "ceres", "pa5", "f090", "asteroid/ceres/f090")
+
+#make_image("/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroid/vesta/f090/vesta_depth1_1569982303_pa5_f090_map.fits", "Vesta", "pa5", "f090")
+
+make_gallery("ceres", "pa5", "f150")
