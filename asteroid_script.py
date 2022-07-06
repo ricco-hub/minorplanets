@@ -70,7 +70,7 @@ def geocentric_to_site(pos, dist, site_pos, site_alt, ctime):
  
  
  
-def make_movie(astinfo, name, arr, freq, odir, rad=10.0, pad=30.0, tol=0.0, lknee=1500, alpha=3.5, beam=0, verbose=1, quiet=0):
+def make_movie(astinfo, name, arr, freq, odir, rad=10.0, pad=30.0, tol=0.0, lknee=1500, alpha=3.5, beam=0, verbose=2, quiet=0):
   '''
   Inputs: 
     astinfo, type: string, specifies path to ephemerides files
@@ -89,107 +89,98 @@ def make_movie(astinfo, name, arr, freq, odir, rad=10.0, pad=30.0, tol=0.0, lkne
     verbose, type: ???, ???
     quiet, type: ???, ????
     verbose, type: ???, ???
-    quiet, type: ???, ???
-    #parser.add_argument("-v", "--verbose", default=1, action="count")
-    #parser.add_argument("-e", "--quiet",   default=0, action="count")
-    
+    quiet, type: ???, ???    
   
   Output:
     map.fits, type: file, file of object name on array arr at frequency freq in directory odir
   '''
   
   #path of depth1 maps
-  depth_path = "/home/r/rbond/sigurdkn/project/actpol/maps/depth1/release/"
+  depth_path = "/home/r/rbond/sigurdkn/project/actpol/maps/depth1/release/*"
   
   #make movie for each file in depth_path
-  for i, dirname in enumerate(os.listdir(path = depth_path)):
-    print("I'm working in dir ", dirname)
-    try:
-      some_ifiles = glob.glob(depth_path + dirname + "/*" + arr + "_" + freq + "_map.fits") 
-      #print("ifiles ", ifiles)      
+  some_ifiles = [depth_path + "/*" + arr + "_" + freq + "*" + "map.fits"]      
       
-      comm    = mpi.COMM_WORLD
-      verbose = verbose - quiet
+  comm    = mpi.COMM_WORLD
+  verbose = verbose - quiet
 
-      r_thumb = rad*utils.arcmin
-      r_full  = r_thumb + pad*utils.arcmin
+  r_thumb = rad*utils.arcmin
+  r_full  = r_thumb + pad*utils.arcmin
       
-      alpha = -alpha
-      beam     = beam*utils.fwhm*utils.arcmin
-      site     = coordinates.default_site
-      site_pos = np.array([site.lon,site.lat])*utils.degree
-      time_tol  = 60
-      time_sane = 3600*24
+  name = utils.replace(os.path.basename(astinfo), ".npy", "").lower()  
+  alpha = -alpha
+  lknee = lknee      
+  beam     = beam*utils.fwhm*utils.arcmin
+  site     = coordinates.default_site
+  site_pos = np.array([site.lon,site.lat])*utils.degree
+  time_tol  = 60
+  time_sane = 3600*24
       
-      ifiles  = sum([sorted(utils.glob(ifile)) for ifile in some_ifiles],[])
-      info    = np.load(astinfo).view(np.recarray)
-      orbit   = interpolate.interp1d(info.ctime, [utils.unwind(info.ra*utils.degree), info.dec*utils.degree, info.r, info.ang*utils.arcsec], kind=3)
+  ifiles  = sum([sorted(utils.glob(ifile)) for ifile in some_ifiles],[])
+  info    = np.load(astinfo).view(np.recarray)
+  orbit   = interpolate.interp1d(info.ctime, [utils.unwind(info.ra*utils.degree), info.dec*utils.degree, info.r, info.ang*utils.arcsec], kind=3)
       
-      utils.mkdir(odir)
+  utils.mkdir(odir)
 
-      for fi in range(comm.rank, len(ifiles), comm.size):		
-      	ifile    = ifiles[fi]
-      	infofile = utils.replace(ifile, "map.fits", "info.hdf")
-      	tfile    = utils.replace(ifile, "map.fits", "time.fits")
-      	ofname   = "%s/%s_%s" % (odir, name, os.path.basename(ifile))
-      	info     = bunch.read(infofile)
+  for fi in range(comm.rank, len(ifiles), comm.size):		
+    ifile    = ifiles[fi] 
+    infofile = utils.replace(ifile, "map.fits", "info.hdf")
+    tfile    = utils.replace(ifile, "map.fits", "time.fits")
+    ofname   = "%s/%s_%s" % (odir, name, os.path.basename(ifile))
+    info     = bunch.read(infofile)
       	# Get the asteroid coordinates
-      	ctime0   = np.mean(info.period)
-      	adata0   = orbit(ctime0)
-      	ast_pos0 = utils.rewind(adata0[1::-1])
-      	message  = "%.0f  %8.3f %8.3f  %8.3f %8.3f %8.3f %8.3f" % (info.t, ast_pos0[1]/utils.degree, ast_pos0[0]/utils.degree, info.box[0,1]/utils.degree, info.box[1,1]/utils.degree, info.box[0,0]/utils.degree, info.box[1,0]/utils.degree)
+    ctime0   = np.mean(info.period)
+    adata0   = orbit(ctime0)
+    ast_pos0 = utils.rewind(adata0[1::-1])
+    message  = "%.0f  %8.3f %8.3f  %8.3f %8.3f %8.3f %8.3f" % (info.t, ast_pos0[1]/utils.degree, ast_pos0[0]/utils.degree, info.box[0,1]/utils.degree, info.box[1,1]/utils.degree, info.box[0,0]/utils.degree, info.box[1,0]/utils.degree)
       	# Check if we're in bounds
-      	if not in_box(info.box, ast_pos0):
-      		if verbose >= 3:
-      			print(colors.lgray + message + " outside" + colors.reset)
-      			continue
-      	# Ok, should try to read in this map. Decide on
+    if not in_box(info.box, ast_pos0):
+      if verbose >= 3:
+        print(colors.lgray + message + " outside" + colors.reset)
+        continue
+      	#Ok, should try to read in this map. Decide on
       	# bounding box to read in
-      	full_box  = make_box(ast_pos0, r_full)
+    full_box  = make_box(ast_pos0, r_full)
       	# Read it and check if we have enough hits in the area we want to use
-      	try:
-      		tmap = enmap.read_map(tfile, box=full_box)
-      		tmap[tmap!=0] += info.t
-      	except (TypeError, FileNotFoundError):
-      		print("Error reading %s. Skipping" % ifile)
-      		continue
-      	# Break out early if nothing is hit
-      	if np.all(tmap == 0):
-      		if verbose >= 2: 
-      			print(colors.white + message + " unhit" + colors.reset)
-      			continue
-      	# Figure out what time the asteroid was actually observed
-      	ctime, err = calc_obs_ctime(orbit, tmap, ctime0) 
-      	if err > time_tol or abs(ctime-ctime0) > time_sane:
-      		if verbose >= 2:
-      			print(colors.white + message + " time" + colors.reset)
-      		continue
-      	# Now that we have the proper time, get the asteroids actual position
-      	adata    = orbit(ctime) 
-      	ast_pos  = utils.rewind(adata[1::-1])
-      	# optionally transform to topocentric here. ~0.1 arcmin effect
-      	thumb_box = make_box(ast_pos, r_thumb)
-      	# Read the actual data
-      	try:
-      		imap = enmap.read_map(ifile, box=full_box)
-      	except (TypeError, FileNotFoundError):
-      		print("Error reading %s. Skipping" % ifile)
-      		continue
-      	if np.mean(imap.submap(thumb_box) == 0) > tol:
-      		if verbose >= 2: 
-      			print(colors.white + message + " unhit" + colors.reset)
-      			continue
-      	# Filter the map
-      	wmap     = filter_map(imap, lknee=lknee, alpha=alpha, beam=beam)
-      	# And reproject it
-      	omap = reproject.thumbnails(wmap, ast_pos, r=r_thumb)
-      	enmap.write_map(ofname, omap)
-      	if verbose >= 1: 
-      		print(colors.lgreen + message + " ok" + colors.reset)
-
-    except:
-      print("No map file in ", dirname)
+    try:
+      tmap = enmap.read_map(tfile, box=full_box)
+      tmap[tmap!=0] += info.t
+    except (TypeError, FileNotFoundError):
+      print("Error reading %s. Skipping" % ifile)
       continue
+      	# Break out early if nothing is hit
+    if np.all(tmap == 0):
+      if verbose >= 2: 
+        print(colors.white + message + " unhit" + colors.reset)
+        continue
+      	# Figure out what time the asteroid was actually observed 
+    ctime, err = calc_obs_ctime(orbit, tmap, ctime0) 
+    if err > time_tol or abs(ctime-ctime0) > time_sane:
+      if verbose >= 2:
+        print(colors.white + message + " time" + colors.reset) #something wrong after this
+      continue
+      	# Now that we have the proper time, get the asteroids actual position
+    adata    = orbit(ctime) 
+    ast_pos  = utils.rewind(adata[1::-1])
+      	# optionally transform to topocentric here. ~0.1 arcmin effect
+    thumb_box = make_box(ast_pos, r_thumb)
+      	# Read the actual data
+    try:
+      imap = enmap.read_map(ifile, box=full_box)
+    except (TypeError, FileNotFoundError):
+      print("Error reading %s. Skipping" % ifile)
+      continue
+    if np.mean(imap.submap(thumb_box) == 0) > tol:
+      if verbose >= 2: 
+        print(colors.white + message + " unhit" + colors.reset)
+        continue
+      	# Filter the map
+    wmap     = filter_map(imap, lknee=lknee, alpha=alpha, beam=beam)
+      	# And reproject it
+    omap = reproject.thumbnails(wmap, ast_pos, r=r_thumb)
+    enmap.write_map(ofname, omap)
+    if verbose >= 1: 
+      print(colors.lgreen + message + " ok" + colors.reset)
    
 def flux():
   pass 
@@ -197,7 +188,7 @@ def flux():
 def make_image(path, name, arr, freq, directory = None):
   '''
   Input:
-    path, type: string, path to map.fits file
+    path, type: string, path to map.fits file generated from running make_movie
     name, type: string, name of object to plot
     arr, type: string, array ACT is on
     freq, type: string, frequency of map
@@ -214,7 +205,7 @@ def make_image(path, name, arr, freq, directory = None):
   #create plot
   plt.figure()
   plt.title("Plot of {name} on {arr} at {freq}".format(name=name, arr=arr, freq=freq))
-  plt.imshow(image_data[0, :, :])
+  plt.imshow(np.fliplr(image_data[0, :, :]))
   
   if directory is not None: 
     plt.savefig(directory + "{name}_image_{arr}_{freq}.pdf".format(name=name, arr=arr, freq=freq))
@@ -234,24 +225,25 @@ def make_gallery(name, arr, freq, directory = None):
     Image, gallery of depth1 images for object name on array arr at frequency freq
   '''
   
-  path = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroid/" + name + "/" + freq
+  #path after running make_movie on depth1 maps  
+  path = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroids/" + name + "/" + freq
   
   for i, dirname in enumerate(os.listdir(path = path)):
     #array of paths to map files
-    map_files = glob.glob(path + "/*" + arr + "_" + freq + "_map.fits") 
+    map_files = glob.glob(path + "/*" + arr + "_" + freq + "*" + "map.fits") 
   
   all_image_files = []    
   for files in map_files:
     image_file = get_pkg_data_filename(files)
-    all_image_files.append(image_file)
+    all_image_files.append(image_file)      
       
-      
+  #print(len(all_image_files))
   count = 0
   #based on length of all_image_files
   #proabably a better way to extract dimensions
   #for rows and cols
-  rows = 9
-  cols = 15
+  rows = 8
+  cols = 14
   fig, axarr = plt.subplots(rows, cols, figsize=(9,6))
     
   #plot at each index in all_image_files  
@@ -262,9 +254,12 @@ def make_gallery(name, arr, freq, directory = None):
       #build image
       image_data = fits.getdata(all_image_files[count], ext=0)
       count += 1
+      #if count >= len(all_image_files):
+      #  break
+      
       
       #plot
-      im = ax.imshow(image_data[0, :, :], vmin=-2000, vmax=8000)
+      im = ax.imshow(np.fliplr(image_data[0, :, :]), vmin=-2000, vmax=8000, cmap='Greys_r')
       ax.get_xaxis().set_visible(False)
       ax.get_yaxis().set_visible(False)
       
@@ -276,11 +271,11 @@ def make_gallery(name, arr, freq, directory = None):
   
 ################################***RUN THINGS BELOW***##################################################################################################
 #path to desired object
-astinfo = "/gpfs/fs0/project/r/rbond/sigurdkn/actpol/ephemerides/objects/Ceres.npy"
+astinfo = "/home/r/rbond/sigurdkn/project/actpol/ephemerides/objects/Ceres.npy"
 #make sure to update with same name and astinfo
 #make sure to change odir to correct name and freq
-#make_movie(astinfo, "ceres", "pa5", "f090", "asteroid/ceres/f090")
+#make_movie(astinfo, "ceres", "pa5", "f150", "asteroids/ceres/f150")
 
-#make_image("/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroid/vesta/f090/vesta_depth1_1569982303_pa5_f090_map.fits", "Vesta", "pa5", "f090")
+#make_image("/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroid/ceres/f150/ceres_depth1_1606494859_pa5_f150_map.fits", "Ceres", "pa5", "f150", directory="/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroids_test/ceres/")
 
-make_gallery("ceres", "pa5", "f150")
+make_gallery("ceres", "pa5", "f150", directory = "asteroids/ceres/f150/")
