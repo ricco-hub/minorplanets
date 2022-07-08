@@ -70,7 +70,7 @@ def geocentric_to_site(pos, dist, site_pos, site_alt, ctime):
  
  
  
-def make_movie(astinfo, name, arr, freq, odir, rad=10.0, pad=30.0, tol=0.0, lknee=1500, alpha=3.5, beam=0, verbose=2, quiet=0):
+def make_movie(astinfo, name, arr, freq, rad=10.0, pad=30.0, tol=0.0, lknee=1500, alpha=3.5, beam=0, verbose=2, quiet=0):
   '''
   Inputs: 
     astinfo, type: string, specifies path to ephemerides files
@@ -78,7 +78,6 @@ def make_movie(astinfo, name, arr, freq, odir, rad=10.0, pad=30.0, tol=0.0, lkne
     arr, type: string, array ACT is on
     freq, type: string, frequency we want
     make sure array and frequency correspond to each other
-    odir, type: string, specify output directory
     
     rad, type: float, ???
     pad, type: float, ???
@@ -120,6 +119,8 @@ def make_movie(astinfo, name, arr, freq, odir, rad=10.0, pad=30.0, tol=0.0, lkne
   info    = np.load(astinfo).view(np.recarray)
   orbit   = interpolate.interp1d(info.ctime, [utils.unwind(info.ra*utils.degree), info.dec*utils.degree, info.r, info.ang*utils.arcsec], kind=3)
       
+  #output directory
+  odir = "asteroids/" + name + "/" + arr + "/" + freq  
   utils.mkdir(odir)
 
   for fi in range(comm.rank, len(ifiles), comm.size):		
@@ -213,7 +214,7 @@ def make_image(path, name, arr, freq, directory = None):
   plt.colorbar()
   plt.show()
   
-def make_gallery(name, arr, freq, directory = None):
+def make_gallery(name, arr, freq, directory = None, show = False):
   '''
   Inputs:
     name, type: string, name of object we want
@@ -226,56 +227,67 @@ def make_gallery(name, arr, freq, directory = None):
   '''
   
   #path after running make_movie on depth1 maps  
-  path = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroids/" + name + "/" + freq
+  path = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroids/" + name + "/" + arr + "/" + freq
   
   for i, dirname in enumerate(os.listdir(path = path)):
     #array of paths to map files
     map_files = glob.glob(path + "/*" + arr + "_" + freq + "*" + "map.fits") 
-  
-  all_image_files = []    
-  for files in map_files:
-    image_file = get_pkg_data_filename(files)
-    all_image_files.append(image_file)      
-      
-  #print(len(all_image_files))
-  count = 0
-  #based on length of all_image_files
-  #proabably a better way to extract dimensions
-  #for rows and cols
-  rows = 8
-  cols = 14
-  fig, axarr = plt.subplots(rows, cols, figsize=(9,6))
     
-  #plot at each index in all_image_files  
-  for i in range(rows):
-    for j in range(cols):
-      ax = axarr[i,j]
+  all_image_files = []    
+  try:  
+    for files in map_files:
+      image_file = get_pkg_data_filename(files)
+      all_image_files.append(image_file)   
       
-      #build image
-      image_data = fits.getdata(all_image_files[count], ext=0)
-      count += 1
-      #if count >= len(all_image_files):
-      #  break
-      
-      
-      #plot
-      im = ax.imshow(np.fliplr(image_data[0, :, :]), vmin=-2000, vmax=8000, cmap='Greys_r')
-      ax.get_xaxis().set_visible(False)
-      ax.get_yaxis().set_visible(False)
-      
-  plt.colorbar(im, ax=axarr[:, :])
-  plt.show()
+    #print(len(all_image_files))
+    count = 0
+    #based on length of all_image_files
+    #proabably a better way to extract dimensions
+    #for rows and cols
+    rows = 8
+    cols = 14
+    fig, axarr = plt.subplots(rows, cols, figsize=(10,10))
   
-  if directory is not None:
-    fig.savefig(directory + "{name}_gallery_{arr}_{freq}.pdf".format(name=name, arr=arr, freq=freq))  
+    #false if there are more hits than gallery size
+    print((rows*cols) > len(all_image_files))  
+    
+    #plot at each index in all_image_files
+    for i in range(rows):
+      for j in range(cols):
+        if count >= len(all_image_files):
+          break            
+     
+        ax = axarr[i,j]
+        
+        #build image        
+        image_data = fits.getdata(all_image_files[count], ext=0)
+        count += 1     
+        
+        #plot
+        #should change color scale based on object we're looking at (vmin=-2000, vmax=8000, for Ceres)
+        im = ax.imshow(np.fliplr(image_data[0, :, :]), cmap='Greys_r')
+        ax.get_xaxis().set_visible(False)
+        ax.get_yaxis().set_visible(False)               
+      
+    plt.colorbar(im, ax=axarr[:, :])
+    if show is not False:  
+      plt.show()
+  
+    if directory is not None:
+      fig.savefig(directory + "{name}_gallery_{arr}_{freq}.pdf".format(name=name, arr=arr, freq=freq))  
+      
+  except UnboundLocalError:
+    print("No hits")      
   
 ################################***RUN THINGS BELOW***##################################################################################################
 #path to desired object
-astinfo = "/home/r/rbond/sigurdkn/project/actpol/ephemerides/objects/Ceres.npy"
+astinfo = "/home/r/rbond/sigurdkn/project/actpol/ephemerides/objects/Ganymed.npy"
+
 #make sure to update with same name and astinfo
 #make sure to change odir to correct name and freq
-#make_movie(astinfo, "ceres", "pa5", "f150", "asteroids/ceres/f150")
+make_movie(astinfo, "ganymed", "pa6", "f090")
 
 #make_image("/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroid/ceres/f150/ceres_depth1_1606494859_pa5_f150_map.fits", "Ceres", "pa5", "f150", directory="/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroids_test/ceres/")
 
-make_gallery("ceres", "pa5", "f150", directory = "asteroids/ceres/f150/")
+#also update save directory
+make_gallery("bamberga", "pa5", "f150", directory = "asteroids/bamberga/pa5/f150/", show=True)    
