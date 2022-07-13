@@ -9,6 +9,8 @@ from astropy.visualization import astropy_mpl_style
 plt.style.use(astropy_mpl_style)
 from astropy.utils.data import get_pkg_data_filename
 from astropy.io import fits
+import h5py
+import shutil
 
 def in_box(box, point): #checks if points are inside box or not
 	box   = np.asarray(box)
@@ -70,7 +72,7 @@ def geocentric_to_site(pos, dist, site_pos, site_alt, ctime):
  
  
  
-def make_movie(astinfo, name, arr, freq, rad=10.0, pad=30.0, tol=0.0, lknee=1500, alpha=3.5, beam=0, verbose=2, quiet=0):
+def get_maps(astinfo, name, arr, freq, rad=10.0, pad=30.0, tol=0.0, lknee=1500, alpha=3.5, beam=0, verbose=2, quiet=0):
   '''
   Inputs: 
     astinfo, type: string, specifies path to ephemerides files
@@ -91,13 +93,13 @@ def make_movie(astinfo, name, arr, freq, rad=10.0, pad=30.0, tol=0.0, lknee=1500
     quiet, type: ???, ???    
   
   Output:
-    map.fits, type: file, file of object name on array arr at frequency freq in directory odir
+    map.fits, type: fits file, file of object name on array arr at frequency freq in directory odir
   '''
   
   #path of depth1 maps
   depth_path = "/home/r/rbond/sigurdkn/project/actpol/maps/depth1/release/*"
   
-  #make movie for each file in depth_path
+  #make map.fits for each file in depth_path
   some_ifiles = [depth_path + "/*" + arr + "_" + freq + "*" + "map.fits"]      
       
   comm    = mpi.COMM_WORLD
@@ -120,15 +122,18 @@ def make_movie(astinfo, name, arr, freq, rad=10.0, pad=30.0, tol=0.0, lknee=1500
   orbit   = interpolate.interp1d(info.ctime, [utils.unwind(info.ra*utils.degree), info.dec*utils.degree, info.r, info.ang*utils.arcsec], kind=3)
       
   #output directory
-  odir = "asteroids/" + name + "/" + arr + "/" + freq  
+  odir = "asteroids/" + name + "/" + arr + "/" + freq    
   utils.mkdir(odir)
 
   for fi in range(comm.rank, len(ifiles), comm.size):		
-    ifile    = ifiles[fi] 
+    ifile    = ifiles[fi]  
     infofile = utils.replace(ifile, "map.fits", "info.hdf")
     tfile    = utils.replace(ifile, "map.fits", "time.fits")
+    varfile    = utils.replace(ifile, "map.fits", "ivar.fits")    
     ofname   = "%s/%s_%s" % (odir, name, os.path.basename(ifile))
-    info     = bunch.read(infofile)
+    varname   = "%s/%s_%s" % (odir, name, os.path.basename(varfile))    
+    
+    info     = bunch.read(infofile)    
       	# Get the asteroid coordinates
     ctime0   = np.mean(info.period)
     adata0   = orbit(ctime0)
@@ -158,7 +163,7 @@ def make_movie(astinfo, name, arr, freq, rad=10.0, pad=30.0, tol=0.0, lknee=1500
     ctime, err = calc_obs_ctime(orbit, tmap, ctime0) 
     if err > time_tol or abs(ctime-ctime0) > time_sane:
       if verbose >= 2:
-        print(colors.white + message + " time" + colors.reset) #something wrong after this
+        print(colors.white + message + " time" + colors.reset) 
       continue
       	# Now that we have the proper time, get the asteroids actual position
     adata    = orbit(ctime) 
@@ -168,6 +173,7 @@ def make_movie(astinfo, name, arr, freq, rad=10.0, pad=30.0, tol=0.0, lknee=1500
       	# Read the actual data
     try:
       imap = enmap.read_map(ifile, box=full_box)
+      var = enmap.read_map(varfile, box=full_box)      
     except (TypeError, FileNotFoundError):
       print("Error reading %s. Skipping" % ifile)
       continue
@@ -180,16 +186,52 @@ def make_movie(astinfo, name, arr, freq, rad=10.0, pad=30.0, tol=0.0, lknee=1500
       	# And reproject it
     omap = reproject.thumbnails(wmap, ast_pos, r=r_thumb)
     enmap.write_map(ofname, omap)
+    
+    vmap = reproject.thumbnails(var, ast_pos, r=r_thumb)
+    enmap.write_map(varname, vmap)    
     if verbose >= 1: 
       print(colors.lgreen + message + " ok" + colors.reset)
+      
+      #get flux of object
+      #print(flux(ast_pos[0]/utils.degree, ast_pos[1]/utils.degree, adata[2], omap, vmap)             
    
-def flux():
-  pass 
+def flux(ra, dec, dist, frhs, kmap, ref_dist = 1):
+  '''
+  Inputs:
+    ra, type: float, ra of object 
+    dec, type: float, dec of object
+    dist, type: float, geocentric distance of object
+    frhs, type: file, matched filter map 
+    kmap, type: file, inverse variance per pixel
+    ref_dist, type: float, reference distance in computing flux
+    
+  Outputs:
+    flux
+    dflux
+  '''
+  
+  #frhs[~np.isfinite(frhs)] = 0
+  thumb_frhs = reproject.thumbnails(frhs, [dec, ra])
+  
+  #kmap[~np.isfinite(kmap)] = 0 
+  thumb_kmap = reproject.thumbnails(kmap, [dec, ra])
+  
+  flux_scale = (dist / ref_dist)**2
+  
+  stack_frhs = thumb_frhs / flux_scale
+  stack_kmap = thumb_kmap / flux_scale**2
+  
+  stack_flux = stack_frhs# / stack_kmap #getting error for different dimensions
+  
+  flux = stack_flux.at([0,0])
+  dflux  = stack_kmap.at([0,0])**-0.5
+  
+  return flux, dflux 
 
 def make_image(path, name, arr, freq, directory = None):
   '''
   Input:
-    path, type: string, path to map.fits file generated from running make_movie
+    path, type: string, path to map.fits file generated from running get_maps
     name, type: string, name of object to plot
     arr, type: string, array ACT is on
     freq, type: string, frequency of map
@@ -221,17 +263,17 @@ def make_gallery(name, arr, freq, directory = None, show = False):
     arr, type: string, array ACT is on
     freq, type: string, frequency we are interested in
     directory, type: string, path to store image
+    show, type: boolean, if true, display image after calling make_gallery
     
   Output:
     Image, gallery of depth1 images for object name on array arr at frequency freq
   '''
   
-  #path after running make_movie on depth1 maps  
+  #path after running get_maps on depth1 maps  
   path = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroids/" + name + "/" + arr + "/" + freq
   
-  for i, dirname in enumerate(os.listdir(path = path)):
-    #array of paths to map files
-    map_files = glob.glob(path + "/*" + arr + "_" + freq + "*" + "map.fits") 
+  #array of paths to map files
+  map_files = glob.glob(path + "/*map.fits") 
     
   all_image_files = []    
   try:  
@@ -264,8 +306,8 @@ def make_gallery(name, arr, freq, directory = None, show = False):
         count += 1     
         
         #plot
-        #should change color scale based on object we're looking at (vmin=-2000, vmax=8000, for Ceres)
-        im = ax.imshow(np.fliplr(image_data[0, :, :]), cmap='Greys_r')
+        #should change color scale based on object(s) we're looking at (vmin=-2000, vmax=8000, for Ceres)
+        im = ax.imshow(np.fliplr(image_data[0, :, :]))
         ax.get_xaxis().set_visible(False)
         ax.get_yaxis().set_visible(False)               
       
@@ -278,16 +320,81 @@ def make_gallery(name, arr, freq, directory = None, show = False):
       
   except UnboundLocalError:
     print("No hits")      
+    
+def make_stack(name, arr, freq, directory = None, show = False):
+  '''
+  Inputs:
+    name, type: string, name of object we want
+    arr, type: string, array ACT is on
+    freq, type: string, frequency we are interested in
+    directory, type: string, path to store image
+    show, type: boolean, if true, display stack after calling make_stack
+    
+  Output:
+    Image, stack of depth1 images for object name on array arr at frequency freq
+  '''
   
+  #path after running get_maps on depth1 maps  
+  path = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroids/" + name + "/" + arr + "/" + freq    
+  
+  #array of paths to ivar and map files
+  map_files = glob.glob(path + "/*map.fits")
+  ivar_files = glob.glob(path + "/*ivar.fits")
+
+  stack = 0
+  wts = 0    
+  num = 0
+  try:
+    for i in range(len(map_files)):
+      if len(map_files) != len(ivar_files):
+        print("ivar files does not equal map files")
+        break
+        
+      #open files
+      hdu_map = fits.open(map_files[i])
+      hdu_ivar = fits.open(ivar_files[i])
+        
+      #get data from files
+      data_map = hdu_map[0].data
+      data_ivar = hdu_ivar[0].data  
+        
+      #weights
+      num += data_map[0,:,:] * data_ivar 
+      wts += data_ivar
+        
+    ans = num / wts
+    hdu = fits.PrimaryHDU(ans)
+    hdu.writeto('stack.fits', overwrite = True)
+      
+    image_file = get_pkg_data_filename('stack.fits')  
+    image_data = fits.getdata(image_file, ext=0)  
+                                  
+    plt.figure()
+    plt.title("Stack of {name} on array {arr} at {freq}".format(name=name, arr=arr, freq=freq))
+    plt.imshow(image_data)  
+    plt.colorbar()    
+      
+    if show is not False:  
+      plt.show()
+    
+    if directory is not None:
+      fig.savefig(directory + "{name}_stack_{arr}_{freq}.pdf".format(name=name, arr=arr, freq=freq))  
+      
+  except UnboundLocalError:
+    print("No hits")    
+    
+      
 ################################***RUN THINGS BELOW***##################################################################################################
 #path to desired object
-astinfo = "/home/r/rbond/sigurdkn/project/actpol/ephemerides/objects/Ganymed.npy"
+astinfo = "/home/r/rbond/sigurdkn/project/actpol/ephemerides/objects/Ceres.npy"
 
 #make sure to update with same name and astinfo
 #make sure to change odir to correct name and freq
-make_movie(astinfo, "ganymed", "pa6", "f090")
+#get_maps(astinfo, "ceres", "pa5", "f150")
 
 #make_image("/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroid/ceres/f150/ceres_depth1_1606494859_pa5_f150_map.fits", "Ceres", "pa5", "f150", directory="/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroids_test/ceres/")
 
 #also update save directory
-make_gallery("bamberga", "pa5", "f150", directory = "asteroids/bamberga/pa5/f150/", show=True)    
+#make_gallery("bamberga", "pa5", "f150", directory = "asteroids/bamberga/pa5/f150/", show=True)
+
+make_stack("ceres", "pa5", "f150", show=True)    
