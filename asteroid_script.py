@@ -10,6 +10,7 @@ plt.style.use(astropy_mpl_style)
 from astropy.utils.data import get_pkg_data_filename
 from astropy.io import fits
 import h5py
+import datetime
 
 def in_box(box, point): #checks if points are inside box or not
 	box   = np.asarray(box)
@@ -117,6 +118,13 @@ def get_maps(astinfo, name, arr, freq, rad=10.0, pad=30.0, tol=0.0, lknee=1500, 
   ifiles  = sum([sorted(utils.glob(ifile)) for ifile in some_ifiles],[])
   info    = np.load(astinfo).view(np.recarray)
   orbit   = interpolate.interp1d(info.ctime, [utils.unwind(info.ra*utils.degree), info.dec*utils.degree, info.r, info.ang*utils.arcsec], kind=3)
+  
+  ra_unhit = []
+  dec_unhit = []
+  
+  ra_hit = []
+  dec_hit = []
+  t_hit = []
       
   #output directory
   #odir = "asteroids/" + name + "/" + arr + "/" + freq
@@ -162,6 +170,8 @@ def get_maps(astinfo, name, arr, freq, rad=10.0, pad=30.0, tol=0.0, lknee=1500, 
     if np.all(tmap == 0):
       if verbose >= 2: 
         print(colors.white + message + " unhit" + colors.reset)
+        ra_unhit.append(ast_pos0[1]/utils.degree)
+        dec_unhit.append(ast_pos0[0]/utils.degree)
         continue
       	# Figure out what time the asteroid was actually observed 
     ctime, err = calc_obs_ctime(orbit, tmap, ctime0) 
@@ -180,8 +190,7 @@ def get_maps(astinfo, name, arr, freq, rad=10.0, pad=30.0, tol=0.0, lknee=1500, 
       var = enmap.read_map(varfile, box=full_box)      
       rho = enmap.read_map(rhofile, box=full_box)
       kap = enmap.read_map(kfile, box=full_box)            
-    except Exception as e: #(TypeError, FileNotFoundError):
-      #print("Error reading %s. Skipping" % ifile)
+    except Exception as e: 
       print(colors.red + str(e) + colors.reset)
       continue
     if np.mean(imap.submap(thumb_box) == 0) > tol:
@@ -203,16 +212,108 @@ def get_maps(astinfo, name, arr, freq, rad=10.0, pad=30.0, tol=0.0, lknee=1500, 
     kmap = reproject.thumbnails(kap, ast_pos, r=r_thumb)
     enmap.write_map(kname, kmap)
     
-    #get hits data
-    ra = ast_pos[1]
-    dec = ast_pos[0]
-    r = adata[2] #geocentric distance
-    time = ctime #in unix time, need to convert?
+    ra_hit.append(ast_pos[1]/utils.degree)
+    dec_hit.append(ast_pos[0]/utils.degree)
+    t_hit.append(info.t)
                             
     if verbose >= 1: 
       print(colors.lgreen + message + " ok" + colors.reset)
+      
+  plt.figure()
+  unhit = plt.scatter(dec_unhit, ra_unhit, marker="_", c="grey", label="Unhit")
+  
+  #date = [datetime.datetime.fromtimestamp(t) for t in t_hit]
+  hit = plt.scatter(dec_hit, ra_hit, c=t_hit, marker="o", label = "Hit")
+  
+  plt.xlabel("Dec (deg)")
+  plt.ylabel("RA (deg)")
+  plt.title("RA vs Dec")
+  plt.legend()
+  plt.colorbar(label="Date")
+  plt.show()
+  plt.close()                   
                    
-                   
+def snr(name, arr, freq, directory = None, show = False):
+  '''
+  Inputs:
+    name, type: string, name of object we're interested in
+    arr, type: string, ACT array
+    freq, type: string, frequency we want
+    directory, type: string, directory to save the output file
+    show, type: boolean, if true, display plot after calling flux
+    
+  Output:
+    stack.fits, type: file, stack of snr_tot of object
+  '''
+  
+  #path after running get_maps on depth1 maps  
+  #path = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroids/" + name + "/" + arr + "/" + freq
+  #temp 
+  path = "/scratch/r/rbond/ricco/minorplanets/test/" + name + "/" + arr + "/" + freq  
+  
+  #get rho and kappa files
+  rho_files = glob.glob(path + "/*rho.fits")
+  kap_files = glob.glob(path + "/*kappa.fits")
+  
+  if len(rho_files) != 0:  
+    #find time
+    str_times = []
+    for time in rho_files:
+      str_times.append(time[69:79]) #indices based on length of path rho_files are in, i.e. change if path changes 
+    int_times = [int(t) for t in str_times]
+    
+    #get data we want: ra, dec, geocentric dist, solar dist
+    eph = np.load("/gpfs/fs0/project/r/rbond/sigurdkn/actpol/ephemerides/objects/" + name.capitalize() + ".npy").view(np.recarray)
+    orbit = interpolate.interp1d(eph.ctime, [utils.unwind(eph.ra*utils.degree), eph.dec*utils.degree, eph.r, eph.rsun], kind=3)
+    
+    rho_tot = 0
+    kap_tot = 0
+    for count, data in enumerate(int_times):
+      ctime = data
+      pos = orbit(ctime)
+      ra = utils.rewind(pos[0])/utils.degree
+      dec = pos[1]/utils.degree
+      r_us = pos[2]
+      r_sun = pos[3]
+      
+      #F weighting
+      F = (r_us**-2) * (r_sun**-2)
+      
+      #open files
+      hdu_rho = fits.open(rho_files[count])
+      hdu_kap = fits.open(kap_files[count])
+      
+      #get data from files
+      data_rho = hdu_rho[0].data
+      data_kap = hdu_kap[0].data
+      
+      #do math
+      rho_tot += data_rho * F
+      kap_tot += data_kap * (F**2)
+      
+    m_tot = rho_tot / kap_tot
+    snr_tot = m_tot / kap_tot**0.5
+      
+    hdu = fits.PrimaryHDU(snr_tot)
+    hdu.writeto("snr_tot.fits", overwrite = True)
+      
+    image_file = get_pkg_data_filename("snr_tot.fits")
+    image_data = fits.getdata(image_file, ext = 0)
+      
+    plt.figure()
+    plt.title("snr tot of {name} on array {arr} at {freq}".format(name=name, arr=arr, freq=freq))
+    plt.imshow(image_data[0,:,:])
+    plt.colorbar()
+      
+    if show is not False:
+      plt.show()
+        
+    if directory is not None:
+      plt.savefig(directory + "{name}_snr_tot_{arr}_{freq}.pdf".format(name=name, arr=arr, freq=freq))
+      
+  else:
+    print("No hits")
+  
 def flux(name, arr, freq, directory = None, show = False):
   '''
   Inputs:
@@ -256,10 +357,6 @@ def flux(name, arr, freq, directory = None, show = False):
     flux_unt = kap_tot**-0.5
     snr = flux / flux_unt
     
-    #print("flux: ", flux[0,40,40])
-    #print("flux uncertainty: ", flux_unt[0,40,40])
-    #print("snr: ", snr[0,40,40])
-    
     hdu = fits.PrimaryHDU(flux)
     hdu.writeto('flux.fits', overwrite = True)
     
@@ -279,7 +376,7 @@ def flux(name, arr, freq, directory = None, show = False):
       
   except UnboundLocalError:
     print("No hits")
-  
+
 def make_image(path, name, arr, freq, directory = None):
   '''
   Input:
@@ -373,7 +470,7 @@ def make_gallery(name, arr, freq, directory = None, show = False):
   except UnboundLocalError:
     print("No hits")      
     
-def make_stack(name, arr, freq, directory = None, show = False):
+def ivar_stack(name, arr, freq, directory = None, show = False):
   '''
   Inputs:
     name, type: string, name of object we want
@@ -442,13 +539,15 @@ astinfo = "/home/r/rbond/sigurdkn/project/actpol/ephemerides/objects/Ceres.npy"
 
 #make sure to update with same name and astinfo
 #make sure to change odir to correct name and freq
-#get_maps(astinfo, "ceres", "pa5", "f150")
+get_maps(astinfo, "ceres", "pa5", "f150")
 
 #make_image("/home/r/rbond/ricco/minorplanets/asteroids/ceres/pa5/f150/ceres_depth1_1623042128_pa5_f150_map.fits", "ceres", "pa5", "f150")
 
 #also update save directory (if applicable)
 #make_gallery("ceres", "pa5", "f150", show=True)
 
-#make_stack("ceres", "pa5", "f150", show=True)  
+#ivar_stack("ceres", "pa5", "f150", show=True)  
 
-flux("ceres", "pa5", "f150")  
+#flux("ceres", "pa5", "f150")
+
+#snr("ceres", "pa5", "f150", show=True)  
