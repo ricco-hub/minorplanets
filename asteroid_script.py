@@ -10,7 +10,8 @@ plt.style.use(astropy_mpl_style)
 from astropy.utils.data import get_pkg_data_filename
 from astropy.io import fits
 import h5py
-import datetime
+from datetime import datetime
+import matplotlib.dates as mdates
 
 def in_box(box, point): #checks if points are inside box or not
 	box   = np.asarray(box)
@@ -72,7 +73,7 @@ def geocentric_to_site(pos, dist, site_pos, site_alt, ctime):
  
  
  
-def get_maps(astinfo, name, arr, freq, rad=10.0, pad=30.0, tol=0.0, lknee=1500, alpha=3.5, beam=0, verbose=2, quiet=0):
+def get_maps(astinfo, name, arr, freq, directory = None, show = False, rad=10.0, pad=30.0, tol=0.0, lknee=1500, alpha=3.5, beam=0, verbose=2, quiet=0):
   '''
   Inputs: 
     astinfo, type: string, specifies path to ephemerides files
@@ -219,19 +220,28 @@ def get_maps(astinfo, name, arr, freq, rad=10.0, pad=30.0, tol=0.0, lknee=1500, 
     if verbose >= 1: 
       print(colors.lgreen + message + " ok" + colors.reset)
       
-  plt.figure()
-  unhit = plt.scatter(dec_unhit, ra_unhit, marker="_", c="grey", label="Unhit")
+  if show is not False:
   
-  #date = [datetime.datetime.fromtimestamp(t) for t in t_hit]
-  hit = plt.scatter(dec_hit, ra_hit, c=t_hit, marker="o", label = "Hit")
-  
-  plt.xlabel("Dec (deg)")
-  plt.ylabel("RA (deg)")
-  plt.title("RA vs Dec")
-  plt.legend()
-  plt.colorbar(label="Date")
-  plt.show()
-  plt.close()                   
+    plt.figure()
+    unhit = plt.scatter(dec_unhit, ra_unhit, marker='.', c="grey", label="Unhit")
+    
+    dates = [datetime.utcfromtimestamp(t).strftime('%Y-%m-%d') for t in t_hit]
+    hit = plt.scatter(dec_hit, ra_hit, c=mdates.date2num(dates), marker="o", label = "Hit")
+    
+    cb = plt.colorbar(label="Date")
+    loc = mdates.AutoDateLocator()
+    cb.ax.yaxis.set_major_locator(loc)
+    cb.ax.yaxis.set_major_formatter(mdates.ConciseDateFormatter(loc))
+    
+    plt.xlabel("Dec (deg)")
+    plt.ylabel("RA (deg)")
+    plt.title("Path of {name}".format(name=name.capitalize()))
+    plt.legend()
+    plt.show()
+    plt.close()
+    
+  if directory is not None:
+    plt.savefig(directory + "{name}_plot_{arr}_{freq}.pdf".format(name=name, arr=arr, freq=freq))                     
                    
 def snr(name, arr, freq, directory = None, show = False):
   '''
@@ -244,6 +254,7 @@ def snr(name, arr, freq, directory = None, show = False):
     
   Output:
     stack.fits, type: file, stack of snr_tot of object
+    F weighted maps
   '''
   
   #path after running get_maps on depth1 maps  
@@ -301,7 +312,7 @@ def snr(name, arr, freq, directory = None, show = False):
     image_data = fits.getdata(image_file, ext = 0)
       
     plt.figure()
-    plt.title("snr tot of {name} on array {arr} at {freq}".format(name=name, arr=arr, freq=freq))
+    plt.title("snr tot of {name} on array {arr} at {freq}".format(name=name.capitalize(), arr=arr, freq=freq))
     plt.imshow(image_data[0,:,:])
     plt.colorbar()
       
@@ -325,12 +336,13 @@ def flux(name, arr, freq, directory = None, show = False):
     
   Output:
     stack.fits, type: file, stack of snr or flux of object
+    Rho and kappa maps without F weighting
   '''
   
   #path after running get_maps on depth1 maps  
   #path = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroids/" + name + "/" + arr + "/" + freq
   #temp 
-  path = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/test/" + name + "/" + arr + "/" + freq  
+  path = "/scratch/r/rbond/ricco/minorplanets/test/" + name + "/" + arr + "/" + freq  
   
   #get rho and kappa files
   rho_files = glob.glob(path + "/*rho.fits")
@@ -354,17 +366,17 @@ def flux(name, arr, freq, directory = None, show = False):
       
     #get flux
     flux = rho_tot / kap_tot
-    flux_unt = kap_tot**-0.5
+    flux_unt = kap_tot**(-0.5)
     snr = flux / flux_unt
     
-    hdu = fits.PrimaryHDU(flux)
-    hdu.writeto('flux.fits', overwrite = True)
+    hdu = fits.PrimaryHDU(snr)
+    hdu.writeto('snr.fits', overwrite = True)
     
-    image_file = get_pkg_data_filename('flux.fits')
+    image_file = get_pkg_data_filename('snr.fits')
     image_data = fits.getdata(image_file, ext = 0)
     
     plt.figure()
-    plt.title("flux of {name} on array {arr} at {freq}".format(name=name, arr=arr, freq=freq))
+    plt.title("snr of {name} on array {arr} at {freq}".format(name=name.capitalize(), arr=arr, freq=freq))
     plt.imshow(image_data[0,:,:])
     plt.colorbar()
     
@@ -376,6 +388,19 @@ def flux(name, arr, freq, directory = None, show = False):
       
   except UnboundLocalError:
     print("No hits")
+    
+  #std calc
+  hdu_pic = fits.open('snr.fits')
+  data_pic = hdu_pic[0].data
+  
+  #delete cols
+  new_pic = np.delete(data_pic, [30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50], axis=1)
+  #delete rows
+  pic = np.delete(new_pic, [30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50], axis=2)
+  
+  var_calc = np.std(pic)
+  print("std for {name}_{arr}_{freq}: ".format(name=name, arr=arr, freq=freq), var_calc)
+    
 
 def make_image(path, name, arr, freq, directory = None):
   '''
@@ -396,7 +421,7 @@ def make_image(path, name, arr, freq, directory = None):
   
   #create plot
   plt.figure()
-  plt.title("Image of {name} on {arr} at {freq}".format(name=name, arr=arr, freq=freq))
+  plt.title("Image of {name} on {arr} at {freq}".format(name=name.capitalize(), arr=arr, freq=freq))
   plt.imshow(np.fliplr(image_data[0, :, :]))
   
   if directory is not None: 
@@ -519,7 +544,7 @@ def ivar_stack(name, arr, freq, directory = None, show = False):
     image_data = fits.getdata(image_file, ext=0)  
                                   
     plt.figure()
-    plt.title("Stack of {name} on array {arr} at {freq}".format(name=name, arr=arr, freq=freq))
+    plt.title("Stack of {name} on array {arr} at {freq}".format(name=name.capitalize(), arr=arr, freq=freq))
     plt.imshow(image_data)  
     plt.colorbar()    
       
@@ -532,14 +557,79 @@ def ivar_stack(name, arr, freq, directory = None, show = False):
   except UnboundLocalError:
     print("No hits")    
     
+def lcurve(name, arr, freq, directory = None, show = False):
+  '''
+  Inputs:
+  
+  Outputs:
+  Creates light curve for object
+  '''      
+  
+  #path after running get_maps on depth1 maps
+  #temp
+  path = "/scratch/r/rbond/ricco/minorplanets/test/" + name + "/" + arr + "/" + freq
+  
+  #get rho and kappa files
+  rho_files = glob.glob(path + "/*rho.fits")
+  kap_files = glob.glob(path + "/*kappa.fits")
+  
+  rho_tot = 0
+  kap_tot = 0
+  
+  if len(rho_files) != 0:
+    #find time
+    str_times = []
+    for time in rho_files:
+      str_times.append(time[73:83]) #69:79 for ceres
+    int_times = [int(t) for t in str_times]
+    
+    flux_data = []
+    err_data = []
+    times_data = []
+    for count, t in enumerate(int_times):
+      #open files
+      hdu_rho = fits.open(rho_files[count])
+      hdu_kap = fits.open(kap_files[count])
       
+      #get data
+      data_rho = hdu_rho[0].data
+      data_kap = hdu_kap[0].data
+      
+      #get flux, error, and time
+      flux = data_rho / data_kap
+      flux_data.append(flux[0,40,40])
+      
+      err = data_kap**(-0.5)
+      err_data.append(err[0,40,40])
+      
+      times_data.append(t)
+    
+    #dates = [datetime.utcfromtimestamp(t).strftime('%d') for t in times_data]
+    #print(times_data)
+    #times_data, flux_data, err_data = zip(*sorted(zip(times_data, flux_data, err_data)))
+    
+    plt.errorbar(times_data, flux_data, yerr=err_data, fmt='o')
+    plt.xlabel("Time (unix)")
+    plt.ylabel("Flux (arbitary)")
+    plt.title("Light curve for {name}".format(name=name.capitalize()))
+    
+    if show is not False:
+      plt.show()
+      
+    if directory is not None:
+      plt.savefig(directory + "{name}_light_curve_{arr}_{freq}.pdf".format(name=name, arr=arr, freq=freq))
+  
+  else:
+    print("No hits")
+  
+  
 ################################***CALL THINGS BELOW***##################################################################################################
 #path to desired object
 astinfo = "/home/r/rbond/sigurdkn/project/actpol/ephemerides/objects/Ceres.npy"
 
 #make sure to update with same name and astinfo
 #make sure to change odir to correct name and freq
-get_maps(astinfo, "ceres", "pa5", "f150")
+get_maps(astinfo, "ceres", "pa5", "f150", show=True)
 
 #make_image("/home/r/rbond/ricco/minorplanets/asteroids/ceres/pa5/f150/ceres_depth1_1623042128_pa5_f150_map.fits", "ceres", "pa5", "f150")
 
@@ -548,6 +638,8 @@ get_maps(astinfo, "ceres", "pa5", "f150")
 
 #ivar_stack("ceres", "pa5", "f150", show=True)  
 
-#flux("ceres", "pa5", "f150")
+#flux("pallas", "pa5", "f150", show=True)
 
-#snr("ceres", "pa5", "f150", show=True)  
+#snr("ceres", "pa5", "f150", show=True)
+
+#lcurve("bamberga", "pa5", "f150", show=True)  
