@@ -120,6 +120,8 @@ def get_maps(astinfo, name, arr, freq, directory = None, show = False, rad=10.0,
   info    = np.load(astinfo).view(np.recarray)
   orbit   = interpolate.interp1d(info.ctime, [utils.unwind(info.ra*utils.degree), info.dec*utils.degree, info.r, info.ang*utils.arcsec], kind=3)
   
+  Name = name.capitalize()  
+  
   ra_unhit = []
   dec_unhit = []
   
@@ -235,8 +237,9 @@ def get_maps(astinfo, name, arr, freq, directory = None, show = False, rad=10.0,
     
     plt.xlabel("Dec (deg)")
     plt.ylabel("RA (deg)")
-    plt.title("Path of {name}".format(name=name.capitalize()))
+    plt.title("Path of {name}".format(name=Name))
     plt.legend()
+    plt.axis([4,7,-180,-170])
     plt.show()
     plt.close()
     
@@ -264,13 +267,15 @@ def snr(name, arr, freq, directory = None, show = False):
   
   #get rho and kappa files
   rho_files = glob.glob(path + "/*rho.fits")
-  kap_files = glob.glob(path + "/*kappa.fits")
+  kap_files = [utils.replace(r, "rho.fits", "kappa.fits") for r in rho_files]
   
   if len(rho_files) != 0:  
     #find time
     str_times = []
+    t_start = len(path) + len(name) + 9
+    t_end = t_start + 10
     for time in rho_files:
-      str_times.append(time[69:79]) #indices based on length of path rho_files are in, i.e. change if path changes 
+      str_times.append(time[t_start:t_end])  
     int_times = [int(t) for t in str_times]
     
     #get data we want: ra, dec, geocentric dist, solar dist
@@ -279,8 +284,8 @@ def snr(name, arr, freq, directory = None, show = False):
     
     rho_tot = 0
     kap_tot = 0
-    for count, data in enumerate(int_times):
-      ctime = data
+    for count, time in enumerate(int_times):
+      ctime = time
       pos = orbit(ctime)
       ra = utils.rewind(pos[0])/utils.degree
       dec = pos[1]/utils.degree
@@ -288,7 +293,7 @@ def snr(name, arr, freq, directory = None, show = False):
       r_sun = pos[3]
       
       #F weighting
-      F = (r_us**-2) * (r_sun**-2)
+      F = (r_us**-2) * (r_sun**-0.5)
       
       #open files
       hdu_rho = fits.open(rho_files[count])
@@ -310,9 +315,11 @@ def snr(name, arr, freq, directory = None, show = False):
       
     image_file = get_pkg_data_filename("snr_tot.fits")
     image_data = fits.getdata(image_file, ext = 0)
+    
+    Name = name.capitalize()
       
     plt.figure()
-    plt.title("snr tot of {name} on array {arr} at {freq}".format(name=name.capitalize(), arr=arr, freq=freq))
+    plt.title("snr tot of {name} on array {arr} at {freq}".format(name=Name, arr=arr, freq=freq))
     plt.imshow(image_data[0,:,:])
     plt.colorbar()
       
@@ -325,7 +332,7 @@ def snr(name, arr, freq, directory = None, show = False):
   else:
     print("No hits")
   
-def flux(name, arr, freq, directory = None, show = False):
+def flux_stack(name, arr, freq, directory = None, show = False):
   '''
   Inputs:
     name, type: string, name of object we're interested in
@@ -347,6 +354,7 @@ def flux(name, arr, freq, directory = None, show = False):
   #get rho and kappa files
   rho_files = glob.glob(path + "/*rho.fits")
   kap_files = glob.glob(path + "/*kappa.fits")
+    
   
   rho_tot = 0
   kap_tot = 0
@@ -365,18 +373,20 @@ def flux(name, arr, freq, directory = None, show = False):
       kap_tot += data_kap
       
     #get flux
-    flux = rho_tot / kap_tot
+    flux = rho_tot / kap_tot    
     flux_unt = kap_tot**(-0.5)
     snr = flux / flux_unt
     
-    hdu = fits.PrimaryHDU(snr)
-    hdu.writeto('snr.fits', overwrite = True)
+    hdu = fits.PrimaryHDU(flux)
+    hdu.writeto('flux.fits', overwrite = True)
     
-    image_file = get_pkg_data_filename('snr.fits')
+    image_file = get_pkg_data_filename('flux.fits')
     image_data = fits.getdata(image_file, ext = 0)
     
+    Name = name.capitalize()
+    
     plt.figure()
-    plt.title("snr of {name} on array {arr} at {freq}".format(name=name.capitalize(), arr=arr, freq=freq))
+    plt.title("flux of {name} on array {arr} at {freq}".format(name=Name, arr=arr, freq=freq))
     plt.imshow(image_data[0,:,:])
     plt.colorbar()
     
@@ -390,16 +400,16 @@ def flux(name, arr, freq, directory = None, show = False):
     print("No hits")
     
   #std calc
-  hdu_pic = fits.open('snr.fits')
-  data_pic = hdu_pic[0].data
+  #hdu_pic = fits.open('flux.fits')
+  #data_pic = hdu_pic[0].data
   
   #delete cols
-  new_pic = np.delete(data_pic, [30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50], axis=1)
+  #new_pic = np.delete(data_pic, [30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50], axis=1)
   #delete rows
-  pic = np.delete(new_pic, [30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50], axis=2)
+  #pic = np.delete(new_pic, [30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50], axis=2)
   
-  var_calc = np.std(pic)
-  print("std for {name}_{arr}_{freq}: ".format(name=name, arr=arr, freq=freq), var_calc)
+  #var_calc = np.std(pic[0, :, :])
+  #print("std for {name}_{arr}_{freq}: ".format(name=name, arr=arr, freq=freq), var_calc)
     
 
 def make_image(path, name, arr, freq, directory = None):
@@ -420,8 +430,10 @@ def make_image(path, name, arr, freq, directory = None):
   image_data = fits.getdata(image_file, ext=0)
   
   #create plot
+  Name = name.capitalize()
+  
   plt.figure()
-  plt.title("Image of {name} on {arr} at {freq}".format(name=name.capitalize(), arr=arr, freq=freq))
+  plt.title("Image of {name} on {arr} at {freq}".format(name=Name, arr=arr, freq=freq))
   plt.imshow(np.fliplr(image_data[0, :, :]))
   
   if directory is not None: 
@@ -543,8 +555,10 @@ def ivar_stack(name, arr, freq, directory = None, show = False):
     image_file = get_pkg_data_filename('stack.fits')  
     image_data = fits.getdata(image_file, ext=0)  
                                   
+    Name = name.capitalize()
+    
     plt.figure()
-    plt.title("Stack of {name} on array {arr} at {freq}".format(name=name.capitalize(), arr=arr, freq=freq))
+    plt.title("Stack of {name} on array {arr} at {freq}".format(name=Name, arr=arr, freq=freq))
     plt.imshow(image_data)  
     plt.colorbar()    
       
@@ -560,9 +574,14 @@ def ivar_stack(name, arr, freq, directory = None, show = False):
 def lcurve(name, arr, freq, directory = None, show = False):
   '''
   Inputs:
+    name, type: string, name of object
+    arr, type: arr, ACT array
+    freq, type: freq, frequency we want
+    directory, type: string, optionally save file in diretory
+    show, type: boolean, if true, display light curve after calling lcurve
   
   Outputs:
-  Creates light curve for object
+    figure, creates light curve for object based on hits after running get_maps
   '''      
   
   #path after running get_maps on depth1 maps
@@ -570,17 +589,16 @@ def lcurve(name, arr, freq, directory = None, show = False):
   path = "/scratch/r/rbond/ricco/minorplanets/test/" + name + "/" + arr + "/" + freq
   
   #get rho and kappa files
-  rho_files = glob.glob(path + "/*rho.fits")
-  kap_files = glob.glob(path + "/*kappa.fits")
-  
-  rho_tot = 0
-  kap_tot = 0
+  rho_files = glob.glob(path + "/*rho.fits") 
+  kap_files = [utils.replace(r, "rho.fits", "kappa.fits") for r in rho_files] 
   
   if len(rho_files) != 0:
     #find time
     str_times = []
+    t_start = len(path) + len(name) + 9
+    t_end = t_start + 10
     for time in rho_files:
-      str_times.append(time[73:83]) #69:79 for ceres
+      str_times.append(time[t_start:t_end]) 
     int_times = [int(t) for t in str_times]
     
     flux_data = []
@@ -597,21 +615,23 @@ def lcurve(name, arr, freq, directory = None, show = False):
       
       #get flux, error, and time
       flux = data_rho / data_kap
-      flux_data.append(flux[0,40,40])
+      good_flux = flux[0, 40, 40]
+      flux_data.append(good_flux)
       
       err = data_kap**(-0.5)
-      err_data.append(err[0,40,40])
+      err_data.append(err[0,40,40]) 
       
       times_data.append(t)
     
     #dates = [datetime.utcfromtimestamp(t).strftime('%d') for t in times_data]
-    #print(times_data)
     #times_data, flux_data, err_data = zip(*sorted(zip(times_data, flux_data, err_data)))
+    mjd_date = utils.ctime2mjd(times_data)
+    Name = name.capitalize()
     
-    plt.errorbar(times_data, flux_data, yerr=err_data, fmt='o')
-    plt.xlabel("Time (unix)")
-    plt.ylabel("Flux (arbitary)")
-    plt.title("Light curve for {name}".format(name=name.capitalize()))
+    plt.errorbar(mjd_date, flux_data, yerr=err_data, fmt='o', capsize=4)
+    plt.xlabel("Time (MJD)")
+    plt.ylabel("Flux (mJy)")
+    plt.title("Light curve for {name}".format(name=Name))
     
     if show is not False:
       plt.show()
@@ -629,17 +649,17 @@ astinfo = "/home/r/rbond/sigurdkn/project/actpol/ephemerides/objects/Ceres.npy"
 
 #make sure to update with same name and astinfo
 #make sure to change odir to correct name and freq
-get_maps(astinfo, "ceres", "pa5", "f150", show=True)
+#get_maps(astinfo, "ceres", "pa5", "f150", show=True)
 
 #make_image("/home/r/rbond/ricco/minorplanets/asteroids/ceres/pa5/f150/ceres_depth1_1623042128_pa5_f150_map.fits", "ceres", "pa5", "f150")
 
 #also update save directory (if applicable)
-#make_gallery("ceres", "pa5", "f150", show=True)
+#make_gallery("ceres", "pa5", "f090", show=True)
 
 #ivar_stack("ceres", "pa5", "f150", show=True)  
 
-#flux("pallas", "pa5", "f150", show=True)
+#flux_stack("ceres", "pa5", "f150")
 
 #snr("ceres", "pa5", "f150", show=True)
 
-#lcurve("bamberga", "pa5", "f150", show=True)  
+lcurve("ceres", "pa4", "f220", show=True) #vesta_pa4_f220, hygiea_pa5_f150
