@@ -91,8 +91,8 @@ def get_maps(astinfo, name, arr, freq, directory = None, show = False, rad=10.0,
     verbose, type: integer, ???
     quiet, type: integer, ????  
   
-  Output:
-    map.fits, type: fits file, file of object name on array arr at frequency freq in directory odir
+  Outputs:
+    map.fits, rho.fits, kappa.fits, ivar.fits, type: fits file, file of object name on array arr at frequency freq saved in directory odir
   '''
   
   #path of depth1 maps
@@ -173,7 +173,18 @@ def get_maps(astinfo, name, arr, freq, directory = None, show = False, rad=10.0,
     if np.all(tmap == 0):
       if verbose >= 2: 
         print(colors.white + message + " unhit" + colors.reset)
-        ra_unhit.append(ast_pos0[1]/utils.degree)
+        RA = ast_pos0[1]/utils.degree
+        if RA > 360:
+          while RA >= 360:
+            RA -= 360
+          ra_unhit.append(RA)
+        elif RA < 0:
+          while RA <= 0:
+            RA += 360
+          ra_unhit.append(RA)
+        else:
+          ra_unhit.append(RA)
+        
         dec_unhit.append(ast_pos0[0]/utils.degree)
         continue
       	# Figure out what time the asteroid was actually observed 
@@ -215,7 +226,18 @@ def get_maps(astinfo, name, arr, freq, directory = None, show = False, rad=10.0,
     kmap = reproject.thumbnails(kap, ast_pos, r=r_thumb)
     enmap.write_map(kname, kmap)
     
-    ra_hit.append(ast_pos[1]/utils.degree)
+    RA = ast_pos[1]/utils.degree
+    if RA > 360:
+      while RA >= 360:
+        RA -= 360
+      ra_hit.append(RA)
+    elif RA < 0:
+      while RA <= 0:
+        RA += 360
+      ra_hit.append(RA)
+    else:
+      ra_hit.append(RA)
+    
     dec_hit.append(ast_pos[0]/utils.degree)
     t_hit.append(info.t)
                             
@@ -225,21 +247,21 @@ def get_maps(astinfo, name, arr, freq, directory = None, show = False, rad=10.0,
   if show is not False:
   
     plt.figure()
-    unhit = plt.scatter(dec_unhit, ra_unhit, marker='.', c="grey", label="Unhit")
+    unhit = plt.scatter(ra_unhit, dec_unhit, marker='.', c="grey", label="Unhit")
     
     dates = [datetime.utcfromtimestamp(t).strftime('%Y-%m-%d') for t in t_hit]
-    hit = plt.scatter(dec_hit, ra_hit, c=mdates.date2num(dates), marker="o", label = "Hit")
+    hit = plt.scatter(ra_hit, dec_hit, c=mdates.date2num(dates), marker="o", label = "Hit")
     
     cb = plt.colorbar(label="Date")
     loc = mdates.AutoDateLocator()
     cb.ax.yaxis.set_major_locator(loc)
     cb.ax.yaxis.set_major_formatter(mdates.ConciseDateFormatter(loc))
     
-    plt.xlabel("Dec (deg)")
-    plt.ylabel("RA (deg)")
+    plt.xlabel("RA (deg)")
+    plt.ylabel("Dec (deg)")
     plt.title("Path of {name}".format(name=Name))
     plt.legend()
-    plt.axis([4,7,-180,-170])
+    plt.axis([180,190, 4,7])
     plt.show()
     plt.close()
     
@@ -294,6 +316,7 @@ def snr(name, arr, freq, directory = None, show = False):
       
       #F weighting
       F = (r_us**-2) * (r_sun**-0.5)
+      
       
       #open files
       hdu_rho = fits.open(rho_files[count])
@@ -582,6 +605,7 @@ def lcurve(name, arr, freq, directory = None, show = False):
   
   Outputs:
     figure, creates light curve for object based on hits after running get_maps
+    also plots F weighting
   '''      
   
   #path after running get_maps on depth1 maps
@@ -601,10 +625,25 @@ def lcurve(name, arr, freq, directory = None, show = False):
       str_times.append(time[t_start:t_end]) 
     int_times = [int(t) for t in str_times]
     
+    #get geocentric dist
+    eph = np.load("/gpfs/fs0/project/r/rbond/sigurdkn/actpol/ephemerides/objects/" + name.capitalize() + ".npy").view(np.recarray)
+    orbit = interpolate.interp1d(eph.ctime, [utils.unwind(eph.ra*utils.degree), eph.dec*utils.degree, eph.r, eph.rsun], kind=3)
+    
     flux_data = []
     err_data = []
     times_data = []
+    Fs = []
     for count, t in enumerate(int_times):
+      #get distances
+      pos = orbit(t)
+      r_us = pos[2]
+      r_sun = pos[3]
+      
+      #F weighting
+      F = (r_us**-2) * (r_sun**-0.5)
+      Fs.append(F)
+    
+    
       #open files
       hdu_rho = fits.open(rho_files[count])
       hdu_kap = fits.open(kap_files[count])
@@ -628,10 +667,20 @@ def lcurve(name, arr, freq, directory = None, show = False):
     mjd_date = utils.ctime2mjd(times_data)
     Name = name.capitalize()
     
-    plt.errorbar(mjd_date, flux_data, yerr=err_data, fmt='o', capsize=4)
-    plt.xlabel("Time (MJD)")
-    plt.ylabel("Flux (mJy)")
-    plt.title("Light curve for {name}".format(name=Name))
+    fig, host = plt.subplots(figsize=(5,5))
+    
+    par1 = host.twinx()
+    host.set_xlabel("Time (MJD)")
+    host.set_ylabel("Flux (mJy)")
+    par1.set_ylabel("F")
+    
+    p1 = host.errorbar(mjd_date, flux_data, yerr=err_data, fmt='o', capsize=4, label='Flux')
+    p2 = par1.scatter(mjd_date, Fs, label='F weighting', c='r')
+    
+    lns = [p1, p2]
+    host.legend(handles = lns, loc='best')
+    
+    plt.title("Light curve of {name}".format(name=Name))
     
     if show is not False:
       plt.show()
@@ -662,4 +711,4 @@ astinfo = "/home/r/rbond/sigurdkn/project/actpol/ephemerides/objects/Ceres.npy"
 
 #snr("ceres", "pa5", "f150", show=True)
 
-lcurve("ceres", "pa4", "f220", show=True) #vesta_pa4_f220, hygiea_pa5_f150
+lcurve("hygiea", "pa5", "f150", show=True) #vesta_pa4_f220, hygiea_pa5_f150
