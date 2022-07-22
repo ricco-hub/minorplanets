@@ -261,7 +261,7 @@ def get_maps(astinfo, name, arr, freq, directory = None, show = False, rad=10.0,
     plt.ylabel("Dec (deg)")
     plt.title("Path of {name}".format(name=Name))
     plt.legend()
-    plt.axis([180,190, 4,7])
+    #plt.axis([180,190, 4,7])
     plt.show()
     plt.close()
     
@@ -307,8 +307,7 @@ def snr(name, arr, freq, directory = None, show = False):
     rho_tot = 0
     kap_tot = 0
     for count, time in enumerate(int_times):
-      ctime = time
-      pos = orbit(ctime)
+      pos = orbit(time)
       ra = utils.rewind(pos[0])/utils.degree
       dec = pos[1]/utils.degree
       r_us = pos[2]
@@ -396,22 +395,28 @@ def flux_stack(name, arr, freq, directory = None, show = False):
       kap_tot += data_kap
       
     #get flux
-    flux = rho_tot / kap_tot    
-    flux_unt = kap_tot**(-0.5)
-    snr = flux / flux_unt
+    if len(rho_files) != 0:
+      flux = rho_tot / kap_tot    
+      flux_unt = kap_tot**(-0.5)
+      snr = flux / flux_unt
+      print("flux for {name}_{arr}_{freq}: ".format(name=name, arr=arr, freq=freq), flux[0, 40, 40])
+      print("flux uncertainty for {name}_{arr}_{freq}: ".format(name=name, arr=arr, freq=freq), flux_unt[0,40,40])    
     
-    hdu = fits.PrimaryHDU(flux)
-    hdu.writeto('flux.fits', overwrite = True)
+      hdu = fits.PrimaryHDU(snr)
+      hdu.writeto('snr.fits', overwrite = True)
     
-    image_file = get_pkg_data_filename('flux.fits')
-    image_data = fits.getdata(image_file, ext = 0)
+      image_file = get_pkg_data_filename('snr.fits')
+      image_data = fits.getdata(image_file, ext = 0)
     
-    Name = name.capitalize()
+      Name = name.capitalize()
     
-    plt.figure()
-    plt.title("flux of {name} on array {arr} at {freq}".format(name=Name, arr=arr, freq=freq))
-    plt.imshow(image_data[0,:,:])
-    plt.colorbar()
+      plt.figure()
+      plt.title("snr of {name} on array {arr} at {freq}".format(name=Name, arr=arr, freq=freq))
+      plt.imshow(image_data[0,:,:])
+      plt.colorbar()
+    
+    else:
+      print("No hits on {name}_{arr}_{freq}".format(name=name, arr=arr, freq=freq))
     
     if show is not False:
       plt.show()
@@ -420,7 +425,7 @@ def flux_stack(name, arr, freq, directory = None, show = False):
       plt.savefig(directory + "{name}_snr_{arr}_{freq}.pdf".format(name=name, arr=arr, freq=freq))
       
   except UnboundLocalError:
-    print("No hits")
+    print("No hits on {name}_{arr}_{freq}".format(name=name, arr=arr, freq=freq))
     
   #std calc
   #hdu_pic = fits.open('flux.fits')
@@ -479,7 +484,8 @@ def make_gallery(name, arr, freq, directory = None, show = False):
   '''
   
   #path after running get_maps on depth1 maps  
-  path = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroids/" + name + "/" + arr + "/" + freq
+  #path = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroids/" + name + "/" + arr + "/" + freq
+  path = "/scratch/r/rbond/ricco/minorplanets/test/" + name + "/" + arr + "/" + freq  
   
   #array of paths to map files
   map_files = glob.glob(path + "/*map.fits") 
@@ -662,8 +668,6 @@ def lcurve(name, arr, freq, directory = None, show = False):
       
       times_data.append(t)
     
-    #dates = [datetime.utcfromtimestamp(t).strftime('%d') for t in times_data]
-    #times_data, flux_data, err_data = zip(*sorted(zip(times_data, flux_data, err_data)))
     mjd_date = utils.ctime2mjd(times_data)
     Name = name.capitalize()
     
@@ -672,7 +676,7 @@ def lcurve(name, arr, freq, directory = None, show = False):
     par1 = host.twinx()
     host.set_xlabel("Time (MJD)")
     host.set_ylabel("Flux (mJy)")
-    par1.set_ylabel("F")
+    par1.set_ylabel("F (Arbitrary)")
     
     p1 = host.errorbar(mjd_date, flux_data, yerr=err_data, fmt='o', capsize=4, label='Flux')
     p2 = par1.scatter(mjd_date, Fs, label='F weighting', c='r')
@@ -694,7 +698,7 @@ def lcurve(name, arr, freq, directory = None, show = False):
   
 ################################***CALL THINGS BELOW***##################################################################################################
 #path to desired object
-astinfo = "/home/r/rbond/sigurdkn/project/actpol/ephemerides/objects/Ceres.npy"
+#astinfo = "/home/r/rbond/sigurdkn/project/actpol/ephemerides/objects/Ceres.npy"
 
 #make sure to update with same name and astinfo
 #make sure to change odir to correct name and freq
@@ -711,4 +715,4 @@ astinfo = "/home/r/rbond/sigurdkn/project/actpol/ephemerides/objects/Ceres.npy"
 
 #snr("ceres", "pa5", "f150", show=True)
 
-lcurve("hygiea", "pa5", "f150", show=True) #vesta_pa4_f220, hygiea_pa5_f150
+#lcurve("bamberga", "pa5", "f150", show=True) #vesta_pa4_f220, hygiea_pa5_f150, pallas_pa5_f150
