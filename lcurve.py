@@ -17,7 +17,7 @@ import pickle as pk
 def get_desig(id_num):
   '''
   Input:
-    id_num, type: integer, designation number of object from Small-Body Database Lookup
+    id_num, type: integer, number between 0 - 799
   Output:
     desig, type: integer, designation number of object
     name, type: string, name of object
@@ -32,102 +32,103 @@ def get_desig(id_num):
     semimajor = df['semimajor'][id_num]
   return desig, name, semimajor
 
-def lcurve(name, arr, freq, id_num, directory = None, show = False):
+def lcurve(arr, freq, directory = None, show = False):
   '''
-  Inputs:
-    name, type: string, name of object, should be capitalized
+    Inputs:
     arr, type: arr, ACT array
     freq, type: freq, frequency we want
     directory, type: string, optionally save file in directory
     show, type: boolean, if true, display light curve after calling lcurve
-    id_num, type: integer, designation number of object
   
-  Outputs:
-    figure, creates light curve for object based on hits after running get_maps
-    also plots F weighting
-  '''      
-  
-  #Jack's maps
-  path = "/scratch/r/rbond/jorlo/actxminorplanets/sigurd/asteroids/" + name 
-  
-  #get rho and kappa files
-  rho_files = glob.glob(path + "/*" + arr + "_" + freq + "_" + "rho.fits")
-  kap_files = [utils.replace(r, "rho.fits", "kappa.fits") for r in rho_files] 
-  
-  if len(rho_files) != 0:
-    #find time
-    str_times = []
-    t_start = len(path) + len(name) + 9
-    t_end = t_start + 10
-    for time in rho_files:
-      str_times.append(time[t_start:t_end]) 
-    int_times = [int(t) for t in str_times]
-    
-    #get geocentric dist
-    eph = np.load("/gpfs/fs0/project/r/rbond/sigurdkn/actpol/ephemerides/objects/" + name + ".npy").view(np.recarray)
-    orbit = interpolate.interp1d(eph.ctime, [utils.unwind(eph.ra*utils.degree), eph.dec*utils.degree, eph.r, eph.rsun, eph.ang*utils.arcsec], kind=3)
-    
-    flux_data = []
-    err_data = []
-    times_data = []
-    Fs = []
-    for count, t in enumerate(int_times):
-      #get distances
-      pos = orbit(t)
-      
-      ignore_desig, ignore_name, semimajor_sun = get_desig(id_num) #need to fix getting designation number
-      ignore_desig, ignore_name, semimajor_earth = get_desig(id_num)
-      
-      d_sun_0, d_earth_0 = semimajor_sun, semimajor_earth 
-      
-      ignore_ra, ignore_dec, delta_earth, delta_sun, ignore_ang = pos      
-      
-      #F weighting
-      F = (d_sun_0)**2 * (d_earth_0)**2 / ((delta_earth)**2*(delta_sun)**2) 
-      Fs.append(F)    
-    
-      #open files
-      hdu_rho = fits.open(rho_files[count])
-      hdu_kap = fits.open(kap_files[count])
-      
-      #get data
-      data_rho = hdu_rho[0].data
-      data_kap = hdu_kap[0].data
-      
-      #get flux, error, and time
-      flux = data_rho / data_kap
-      good_flux = flux[0, 40, 40]
-      flux_data.append(good_flux)
-      
-      err = np.abs(data_kap)**(-0.5)
-      err_data.append(err[0,40,40]) 
-      
-      times_data.append(t)
-    
-    mjd_date = utils.ctime2mjd(times_data)
-    
-    fig, host = plt.subplots(figsize=(5,5))
-    
-    par1 = host.twinx()
-    host.set_xlabel("Time (MJD)")
-    host.set_ylabel("Flux (mJy)")
-    par1.set_ylabel("F (Reference)")
-    
-    p1 = host.errorbar(mjd_date, flux_data, yerr=err_data, fmt='o', capsize=4, label='Flux')
-    p2 = par1.scatter(mjd_date, Fs, label='F weighting', c='r')
-    
-    lns = [p1, p2]
-    host.legend(handles = lns, loc='best')
-    
-    plt.title("Light curve of {name} on {arr} at {freq}".format(name=name, arr=arr, freq=freq))
-    
-    if show is not False:
-      plt.show()
-      
-    if directory is not None:
-      plt.savefig(directory + "{name}_light_curve_{arr}_{freq}.pdf".format(name=name, arr=arr, freq=freq))
-  
-  else:
-    print("No hits")
+    Outputs:
+      figure, creates light curve for object based on hits after running get_maps
+      also plots F weighting
+  '''
 
-lcurve("Hygiea", "pa5", "f150", 10, show=True)
+  for i in range(3):
+    #get semimajor axis and name
+    ignore_desig, name, semimajor_sun = get_desig(i)
+    ignore_desig, ignore_name, semimajor_earth = get_desig(i)    
+    
+    #Jack's maps
+    path = "/scratch/r/rbond/jorlo/actxminorplanets/sigurd/asteroids/" + name 
+    
+    #get rho and kappa files
+    rho_files = glob.glob(path + "/*" + arr + "_" + freq + "_" + "rho.fits")
+    kap_files = [utils.replace(r, "rho.fits", "kappa.fits") for r in rho_files] 
+    
+    if len(rho_files) != 0:
+      #find time
+      str_times = []
+      t_start = len(path) + len(name) + 9
+      t_end = t_start + 10
+      for time in rho_files:
+        str_times.append(time[t_start:t_end]) 
+      int_times = [int(t) for t in str_times]
+      
+      #get geocentric dist
+      eph = np.load("/gpfs/fs0/project/r/rbond/sigurdkn/actpol/ephemerides/objects/" + name + ".npy").view(np.recarray)
+      orbit = interpolate.interp1d(eph.ctime, [utils.unwind(eph.ra*utils.degree), eph.dec*utils.degree, eph.r, eph.rsun, eph.ang*utils.arcsec], kind=3)
+      
+      flux_data = []
+      err_data = []
+      times_data = []
+      Fs = []
+      for count, t in enumerate(int_times):
+        #get distances
+        pos = orbit(t)
+        
+        d_sun_0, d_earth_0 = semimajor_sun, semimajor_earth 
+        
+        ignore_ra, ignore_dec, delta_earth, delta_sun, ignore_ang = pos      
+        
+        #F weighting
+        F = (d_sun_0)**2 * (d_earth_0)**2 / ((delta_earth)**2*(delta_sun)**2) * 791.92334
+        Fs.append(F)    
+      
+        #open files
+        hdu_rho = fits.open(rho_files[count])
+        hdu_kap = fits.open(kap_files[count])
+        
+        #get data
+        data_rho = hdu_rho[0].data
+        data_kap = hdu_kap[0].data
+        
+        #get flux, error, and time
+        flux = data_rho / data_kap
+        good_flux = flux[0, 40, 40]
+        #print(good_flux)
+        flux_data.append(good_flux)
+        
+        err = np.abs(data_kap)**(-0.5)
+        err_data.append(err[0,40,40]) 
+        
+        times_data.append(t)
+      
+      mjd_date = utils.ctime2mjd(times_data)
+      
+      fig, host = plt.subplots(figsize=(5,5))
+      
+      par1 = host.twinx()
+      host.set_xlabel("Time (MJD)")
+      host.set_ylabel("Flux (mJy)")
+      par1.set_ylabel("F (Reference)")
+      
+      p1 = host.errorbar(mjd_date, flux_data, yerr=err_data, fmt='o', capsize=4, label='Flux')
+      p2 = par1.scatter(mjd_date, Fs, label='F weighting', c='r')
+      
+      lns = [p1, p2]
+      host.legend(handles = lns, loc='best')
+      
+      plt.title("Light curve of {name} on {arr} at {freq}".format(name=name, arr=arr, freq=freq))
+      
+      if show is not False:
+        plt.show()
+        
+      if directory is not None:
+        plt.savefig(directory + "{name}_light_curve_{arr}_{freq}.pdf".format(name=name, arr=arr, freq=freq))
+    
+    else:
+      print("No hits")
+
+lcurve("pa5", "f150", show=True)
