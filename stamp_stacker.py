@@ -32,6 +32,131 @@ def get_desig(id_num):
     semimajor = df['semimajor'][id_num]
   return desig, name, semimajor
   
+def get_index(name):
+  '''
+    Inputs:
+    name, type: string, name of object
+    
+    Output:
+    desig, type: integer, index of object in asteroids.pk file
+  '''
+  
+  with open('/home/r/rbond/ricco/minorplanets/asteroids.pk', 'rb') as f:
+    df = pk.load(f)    
+    idx = np.where((df['name'] == name))[0]    
+    desig = df['designation'][idx]
+  
+  string = desig.to_string()  
+  num_string = ''
+  
+  for s in string:
+    if s == ' ':
+      break
+    else:
+      num_string += s
+  
+  indx = int(num_string)
+  return indx
+  
+def single_stack(name, arr, freq, directory = None, show = False):
+  '''
+  Inputs:
+    arr, type: string, ACT array
+    freq, type: string, frequency we want
+    directory, type: string, directory to save the output file
+    show, type: boolean, if true, display plot after calling flux
+    
+  Output:
+    stack.fits, type: file, stack of snr or flux of object
+    Rho and kappa maps with F weighting
+  '''
+  index = get_index(name)
+  #get semimajor axis and name
+  ignore_desig, name, semimajor_sun = get_desig(index)
+  ignore_desig, ignore_name, semimajor_earth = get_desig(index)
+ 
+  #Jack's maps  
+  path = "/scratch/r/rbond/jorlo/actxminorplanets/sigurd/asteroids/" + name  
+   
+  #get rho and kappa files
+  rho_files = glob.glob(path + "/*" + arr + "_" + freq + "_" + "rho.fits")
+  kap_files = [utils.replace(r, "rho.fits", "kappa.fits") for r in rho_files]
+     
+  rho_tot = 0
+  kap_tot = 0
+   
+  if len(rho_files) != 0:
+    #find time
+    str_times = []
+    t_start = len(path) + len(name) + 9
+    t_end = t_start + 10
+    for time in rho_files:
+      str_times.append(time[t_start:t_end]) 
+    int_times = [int(t) for t in str_times]
+     
+    #get geocentric dist
+    eph = np.load("/gpfs/fs0/project/r/rbond/sigurdkn/actpol/ephemerides/objects/" + name + ".npy").view(np.recarray)
+    orbit = interpolate.interp1d(eph.ctime, [utils.unwind(eph.ra*utils.degree), eph.dec*utils.degree, eph.r, eph.rsun, eph.ang*utils.arcsec], kind=3)
+     
+    flux_data = []
+    err_data = []
+    times_data = []
+     
+    for count, t in enumerate(int_times):
+      #get distances
+      pos = orbit(t)
+     
+      d_sun_0, d_earth_0 = semimajor_sun, semimajor_earth 
+     
+      ignore_ra, ignore_dec, delta_earth, delta_sun, ignore_ang = pos      
+     
+      #F weighting
+      F = (d_sun_0)**2 * (d_earth_0)**2 / ((delta_earth)**2*(delta_sun)**2)
+     
+      #open files
+      hdu_rho = fits.open(rho_files[count])
+      hdu_kap = fits.open(kap_files[count])
+     
+      #get data from files
+      data_rho = hdu_rho[0].data
+      data_kap = hdu_kap[0].data      
+     
+      #add and F weight
+      rho_tot += data_rho * F
+      kap_tot += data_kap * (F**2)
+     
+    if len(rho_files) != 0:
+      flux = rho_tot / kap_tot    
+      flux_unt = kap_tot**(-0.5)
+      snr = flux / flux_unt
+      #print("flux for {name}_{arr}_{freq}: ".format(name=name, arr=arr, freq=freq), flux[0, 40, 40])
+      #print("flux uncertainty for {name}_{arr}_{freq}: ".format(name=name, arr=arr, freq=freq), flux_unt[0,40,40])    
+   
+      hdu = fits.PrimaryHDU(snr)
+      hdu.writeto('snr.fits', overwrite = True)
+     
+      image_file = get_pkg_data_filename('snr.fits')
+      image_data = fits.getdata(image_file, ext = 0)
+   
+      Name = name.capitalize()
+   
+      plt.figure()
+      plt.title("snr of {name} on array {arr} at {freq}".format(name=Name, arr=arr, freq=freq))
+      plt.imshow(image_data[0,:,:])
+      plt.colorbar()
+   
+    else:
+      print("No hits on {name}_{arr}_{freq}".format(name=name, arr=arr, freq=freq))
+   
+    if show is not False:
+      plt.show()
+     
+    if directory is not None:
+      plt.savefig(directory + "{name}_snr_{arr}_{freq}.pdf".format(name=name, arr=arr, freq=freq))
+     
+  else:
+    print("No hits on {name}_{arr}_{freq}".format(name=name, arr=arr, freq=freq))
+
 def flux_stack(arr, freq, directory = None, show = False):
   '''
   Inputs:
@@ -44,7 +169,7 @@ def flux_stack(arr, freq, directory = None, show = False):
     stack.fits, type: file, stack of snr or flux of object
     Rho and kappa maps with F weighting
   '''
-  for i in range(3):
+  for i in range(100):
     #get semimajor axis and name
     ignore_desig, name, semimajor_sun = get_desig(i)
     ignore_desig, ignore_name, semimajor_earth = get_desig(i)
@@ -85,7 +210,7 @@ def flux_stack(arr, freq, directory = None, show = False):
         ignore_ra, ignore_dec, delta_earth, delta_sun, ignore_ang = pos      
       
         #F weighting
-        F = (d_sun_0)**2 * (d_earth_0)**2 / ((delta_earth)**2*(delta_sun)**2) * 791.92334
+        F = (d_sun_0)**2 * (d_earth_0)**2 / ((delta_earth)**2*(delta_sun)**2)
       
         #open files
         hdu_rho = fits.open(rho_files[count])
@@ -131,4 +256,5 @@ def flux_stack(arr, freq, directory = None, show = False):
     else:
       print("No hits on {name}_{arr}_{freq}".format(name=name, arr=arr, freq=freq))
 
-flux_stack("pa5", "f150", show=True)
+#flux_stack("pa5", "f150", directory = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroid_stamps/")
+#single_stack("Erminia", "pa5", "f150", show = True)
