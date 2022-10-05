@@ -39,14 +39,12 @@ def get_index(name):
     name, type: string, name of object
     
     Output:
-    desig, type: integer, index number of object in asteroids.pk file
+    desig, type: integer, index of object in asteroids.pk file
   '''
   
   with open('/home/r/rbond/ricco/minorplanets/asteroids.pk', 'rb') as f:
-    df = pk.load(f)
-    
-    idx = np.where((df['name'] == name))[0]
-    
+    df = pk.load(f)    
+    idx = np.where((df['name'] == name))[0]    
     desig = df['designation'][idx]
   
   string = desig.to_string()
@@ -115,7 +113,7 @@ def one_lcurve(name, arr, freq, directory = None, show = False):
       ignore_ra, ignore_dec, delta_earth, delta_sun, ignore_ang = pos
       
       #F weighting
-      F = (d_sun_0)**2 * (d_earth_0)**2 / ((delta_earth)**2*(delta_sun)**2) * 491
+      F = (d_sun_0)**2 * (d_earth_0)**2 / ((delta_earth)**2*(delta_sun)**2) #* 491
       Fs.append(F)
       
       #open files
@@ -167,7 +165,7 @@ def lcurves(arr, freq, directory = None, show = False):
       also plots F weighting
   '''
 
-  for i in range(2):
+  for i in range(10):
     #get semimajor axis and name
     ignore_desig, name, semimajor_sun = get_desig(i)
     ignore_desig, ignore_name, semimajor_earth = get_desig(i)    
@@ -205,7 +203,7 @@ def lcurves(arr, freq, directory = None, show = False):
         ignore_ra, ignore_dec, delta_earth, delta_sun, ignore_ang = pos      
         
         #F weighting
-        F = (d_sun_0)**2 * (d_earth_0)**2 / ((delta_earth)**2*(delta_sun)**2) * 491.92334
+        F = (d_sun_0)**2 * (d_earth_0)**2 / ((delta_earth)**2*(delta_sun)**2) #* 491.92334
         Fs.append(F)    
       
         #open files
@@ -229,6 +227,7 @@ def lcurves(arr, freq, directory = None, show = False):
       
       mjd_date = utils.ctime2mjd(times_data)
       
+      plt.clf()
       plt.errorbar(mjd_date, flux_data, yerr=err_data, fmt='o', capsize=4, label='Flux')
       plt.scatter(mjd_date, Fs, label='F weighting', c='r')
       plt.xlabel("Time (MJD)")
@@ -243,7 +242,8 @@ def lcurves(arr, freq, directory = None, show = False):
         plt.savefig(directory + "{name}_light_curve_{arr}_{freq}.pdf".format(name=name, arr=arr, freq=freq))
     
     else:
-      print("No hits")
+      print("No hits")     
 
-#lcurves("pa5", "f150", show=True)
-one_lcurve("Bamberga", "pa4", "f150", show=True)
+
+lcurves("pa5", "f150", show=True)
+#one_lcurve("Eros", "pa5", "f150", show=True)
