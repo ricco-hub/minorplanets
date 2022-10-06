@@ -60,6 +60,27 @@ def get_index(name):
   indx = int(num_string)
   return indx
   
+#get theory fluxes
+def get_theory(name, freq):
+  with open("/home/r/rbond/ricco/minorplanets/theory_flux_dict.pk", 'rb') as f:
+    '''
+    Format: [f090, f150, f220]
+    '''
+    theory_flux_dict = pk.load(f)
+    
+  try:
+    if freq == "f090":
+      return theory_flux_dict[name]["run5a"][0]
+    elif freq == "f150":
+      return theory_flux_dict[name]["run5a"][1]
+    elif freq == "f220":
+      return theory_flux_dict[name]["run5a"][2]
+    else:
+      print("Not a valid frequency, please try again")
+  
+  except KeyError:
+    print("Object " + name + " not currently in flux theory file")    
+
 def one_lcurve(name, arr, freq, directory = None, show = False):
   '''
     Inputs:
@@ -78,6 +99,9 @@ def one_lcurve(name, arr, freq, directory = None, show = False):
   #get semimajor axis and name
   ignore_desig, name, semimajor_sun = get_desig(index)
   ignore_desig, ignore_name, semimajor_earth = get_desig(index)
+  
+  #get ref flux
+  ref_flux = get_theory(name, freq)
   
   #Jack's maps
   path = "/scratch/r/rbond/jorlo/actxminorplanets/sigurd/asteroids/" + name
@@ -113,8 +137,12 @@ def one_lcurve(name, arr, freq, directory = None, show = False):
       ignore_ra, ignore_dec, delta_earth, delta_sun, ignore_ang = pos
       
       #F weighting
-      F = (d_sun_0)**2 * (d_earth_0)**2 / ((delta_earth)**2*(delta_sun)**2) #* 491
-      Fs.append(F)
+      try:
+        F = (d_sun_0)**2 * (d_earth_0)**2 / ((delta_earth)**2*(delta_sun)**2) * ref_flux
+        Fs.append(F)
+      except:
+        print("Unable to generate light curve")
+        break
       
       #open files
       hdu_rho = fits.open(rho_files[count])
@@ -165,10 +193,13 @@ def lcurves(arr, freq, directory = None, show = False):
       also plots F weighting
   '''
 
-  for i in range(10):
+  for i in range(3):    
     #get semimajor axis and name
     ignore_desig, name, semimajor_sun = get_desig(i)
-    ignore_desig, ignore_name, semimajor_earth = get_desig(i)    
+    ignore_desig, ignore_name, semimajor_earth = get_desig(i)
+    
+    #get ref flux
+    ref_flux = get_theory(name, freq)    
     
     #Jack's maps
     path = "/scratch/r/rbond/jorlo/actxminorplanets/sigurd/asteroids/" + name 
@@ -203,8 +234,12 @@ def lcurves(arr, freq, directory = None, show = False):
         ignore_ra, ignore_dec, delta_earth, delta_sun, ignore_ang = pos      
         
         #F weighting
-        F = (d_sun_0)**2 * (d_earth_0)**2 / ((delta_earth)**2*(delta_sun)**2) #* 491.92334
-        Fs.append(F)    
+        try:
+          F = (d_sun_0)**2 * (d_earth_0)**2 / ((delta_earth)**2*(delta_sun)**2) * ref_flux
+          Fs.append(F)
+        except TypeError:
+          print("Unable to generate light curve")
+          break    
       
         #open files
         hdu_rho = fits.open(rho_files[count])
@@ -240,10 +275,22 @@ def lcurves(arr, freq, directory = None, show = False):
         
       if directory is not None:
         plt.savefig(directory + "{name}_light_curve_{arr}_{freq}.pdf".format(name=name, arr=arr, freq=freq))
+        
+      #pickle data(?)
+      #data_dict = {'Name': name, 'Array': arr, 'Frequency': freq, 'Flux': flux_data, 'F': Fs, 'Time': mjd_date, 'Error': err_data}
+      #filename = 'lcurve_data'
+      #filename = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data.pk"
+      #outfile = open(filename, 'wb')
+      #pk.dump(data_dict, outfile)  
+      #outfile.close()
     
     else:
       print("No hits")     
 
 
 lcurves("pa5", "f150", show=True)
+#infile = open('/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data.pk', 'rb')
+#new_dict = pk.load(infile)
+#infile.close()
+#print(new_dict)
 #one_lcurve("Eros", "pa5", "f150", show=True)
