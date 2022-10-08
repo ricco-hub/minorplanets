@@ -192,14 +192,26 @@ def lcurves(arr, freq, directory = None, show = False):
       figure, creates light curve for object based on hits after running get_maps
       also plots F weighting
   '''
+  Objects = []
+  Array = []
+  Frequency = []
+  Fluxes = []
+  Times = []
+  Errors = []
+  Weights = []
+  Theory = []
 
-  for i in range(3):    
+  for i in range(100):    
     #get semimajor axis and name
     ignore_desig, name, semimajor_sun = get_desig(i)
     ignore_desig, ignore_name, semimajor_earth = get_desig(i)
+    Objects.append(name)
+    Array.append(arr)
+    Frequency.append(freq)
     
     #get ref flux
-    ref_flux = get_theory(name, freq)    
+    ref_flux = get_theory(name, freq)
+    Theory.append(ref_flux)    
     
     #Jack's maps
     path = "/scratch/r/rbond/jorlo/actxminorplanets/sigurd/asteroids/" + name 
@@ -259,6 +271,7 @@ def lcurves(arr, freq, directory = None, show = False):
         err_data.append(err[0,40,40]) 
         
         times_data.append(t)
+        
       
       mjd_date = utils.ctime2mjd(times_data)
       
@@ -270,27 +283,178 @@ def lcurves(arr, freq, directory = None, show = False):
       plt.legend(loc='best')      
       plt.title("Light curve of {name} on {arr} at {freq}".format(name=name, arr=arr, freq=freq))
       
+      Fluxes.append(flux_data)
+      Errors.append(err_data)
+      Times.append(mjd_date)
+      Weights.append(Fs)
+      
       if show is not False:
         plt.show()
         
       if directory is not None:
         plt.savefig(directory + "{name}_light_curve_{arr}_{freq}.pdf".format(name=name, arr=arr, freq=freq))
-        
+           
       #pickle data(?)
-      #data_dict = {'Name': name, 'Array': arr, 'Frequency': freq, 'Flux': flux_data, 'F': Fs, 'Time': mjd_date, 'Error': err_data}
-      #filename = 'lcurve_data'
+      #data_dict = {'Name': Objects, 'Array': Array, 'Frequency': Frequency, 'Flux': Fluxes, 'F': Weights, 'Time': Times, 'Error': Errors, 'Ref Flux': Theory}
       #filename = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data.pk"
       #outfile = open(filename, 'wb')
       #pk.dump(data_dict, outfile)  
       #outfile.close()
     
     else:
-      print("No hits")     
+      print("No hits")
+      
+def all_lcurves(show = False, directory = None):
+  '''
+  Inputs:
+    directory, type: string, optionally save file in directory
+    show, type: boolean, if true, display light curve after calling lcurve
+  
+  Outputs:
+    figure, creates light curves for all frequencies object based on hits after running get_maps
+    also plots F weighting
+  '''
+  
+  #get f090
+  infile_f090 = open('/scratch/r/rbond/ricco/minorplanets/lcurve_data_f090.pk', 'rb')
+  dict_f090 = pk.load(infile_f090)
+  infile_f090.close()
+  
+  #get f150
+  infile_f150 = open('/scratch/r/rbond/ricco/minorplanets/lcurve_data_f150.pk', 'rb')
+  dict_f150 = pk.load(infile_f150)
+  infile_f150.close()
+    
+  #get f220
+  infile_f220 = open('/scratch/r/rbond/ricco/minorplanets/lcurve_data_f220.pk', 'rb')
+  dict_f220 = pk.load(infile_f220)
+  infile_f220.close()
+  
+  names = dict_f090['Name']  
+      
+  for i in range(100):
+    #get times, fluxs, Fs, errors
+    times_f090 = dict_f090['Time'][i]
+    flux_f090 = dict_f090['Flux'][i]
+    fWeights_f090 = dict_f090['F'][i]
+    error_f090 = dict_f090['Error'][i]
+  
+    times_f150 = dict_f150['Time'][i]
+    flux_f150 = dict_f150['Flux'][i]
+    fWeights_f150 = dict_f150['F'][i]
+    error_f150 = dict_f150['Error'][i]
+    
+    times_f220 = dict_f220['Time'][i]
+    flux_f220 = dict_f220['Flux'][i]
+    fWeights_f220 = dict_f220['F'][i]
+    error_f220 = dict_f220['Error'][i]  
+    
+    #plot together
+    plt.clf()
+    plt.errorbar(times_f090, flux_f090, yerr=error_f090, fmt='o', capsize=4, label='Flux at f090')
+    plt.scatter(times_f090, fWeights_f090, label='F weighting')
+    
+    plt.errorbar(times_f150, flux_f150, yerr=error_f150, fmt='o', capsize=4, label='Flux at f150')
+    plt.scatter(times_f150, fWeights_f150, label='F weighting')
+    
+    plt.errorbar(times_f220, flux_f220, yerr=error_f220, fmt='o', capsize=4, label='Flux at f220')
+    plt.scatter(times_f220, fWeights_f220, label='F weighting')
+        
+    plt.xlabel("Time (MJD)")
+    plt.ylabel("Flux (mJy)")
+    plt.legend(loc='best')      
+    plt.title("Light curves of {name}".format(name=names[i]))
+    
+    if show is not False:
+      plt.show()  
+      
+    if directory is not None:
+      plt.savefig(directory + "{name}_light_curves.pdf".format(name=names[i]))    
+  
+def ratios(show = False, directory = None):
+  '''
+  Inputs:
+    directory, type: string, optionally save file in directory
+    show, type: boolean, if true, display light curve after calling lcurve
+  
+  Outputs:
+    figure, creates light curves for all frequencies object based on hits after running get_maps
+    also plots F weighting
+  '''
+  
+  #get f090
+  infile_f090 = open('/scratch/r/rbond/ricco/minorplanets/lcurve_data_f090.pk', 'rb')
+  dict_f090 = pk.load(infile_f090)
+  infile_f090.close()
+  
+  #get f150
+  infile_f150 = open('/scratch/r/rbond/ricco/minorplanets/lcurve_data_f150.pk', 'rb')
+  dict_f150 = pk.load(infile_f150)
+  infile_f150.close()
+    
+  #get f220
+  infile_f220 = open('/scratch/r/rbond/ricco/minorplanets/lcurve_data_f220.pk', 'rb')
+  dict_f220 = pk.load(infile_f220)
+  infile_f220.close()
+  
+  names = dict_f090['Name']  
+      
+  for i in range(100):
+    #get times, fluxs, Fs, errors
+    times_f090 = dict_f090['Time'][i]
+    flux_f090 = dict_f090['Flux'][i]
+    fWeights_f090 = dict_f090['F'][i]
+    error_f090 = dict_f090['Error'][i]
+  
+    times_f150 = dict_f150['Time'][i]
+    flux_f150 = dict_f150['Flux'][i]
+    fWeights_f150 = dict_f150['F'][i]
+    error_f150 = dict_f150['Error'][i]
+    
+    times_f220 = dict_f220['Time'][i]
+    flux_f220 = dict_f220['Flux'][i]
+    fWeights_f220 = dict_f220['F'][i]
+    error_f220 = dict_f220['Error'][i]  
+    
+    #get ratios
+    ratio_f090 = []
+    ratio_f150 = []    
+    ratio_f220 = []    
+    for i in range(len(flux_f090)):
+      r_f090 = flux_f090[i] / fWeights_f090[i]
+      r_f150 = flux_f150[i] / fWeights_f150[i]
+      r_f220 = flux_f220[i] / fWeights_f220[i]
+      
+      ratio_f090.append(r_f090) 
+      ratio_f150.append(r_f150)
+      ratio_f220.append(r_f220)                           
+    
+    
+    #plot together
+    plt.clf()
+    #plt.errorbar(times_f090, flux_f090, yerr=error_f090, fmt='o', capsize=4, label='Flux at f090')
+    plt.scatter(times_f090, ratio_f090, label='F weighting')
+    
+    #plt.errorbar(times_f150, flux_f150, yerr=error_f150, fmt='o', capsize=4, label='Flux at f150')
+    plt.scatter(times_f150, ratio_f150, label='F weighting')
+    
+    #plt.errorbar(times_f220, flux_f220, yerr=error_f220, fmt='o', capsize=4, label='Flux at f220')
+    plt.scatter(times_f220, ratio_f220, label='F weighting')
+        
+    plt.xlabel("Time (MJD)")
+    plt.ylabel("F Weight / Flux")
+    plt.legend(loc='best')      
+    plt.title("Ratios of {name}".format(name=names[i]))
+    
+    if show is not False:
+      plt.show()  
+      
+    if directory is not None:
+      plt.savefig(directory + "{name}_light_curves.pdf".format(name=names[i]))    
+     
 
 
-lcurves("pa5", "f150", show=True)
-#infile = open('/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data.pk', 'rb')
-#new_dict = pk.load(infile)
-#infile.close()
-#print(new_dict)
+#all_lcurves(show = True)
+ratios(show = True)
+#lcurves("pa4", "f090", show=True)
 #one_lcurve("Eros", "pa5", "f150", show=True)
