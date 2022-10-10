@@ -352,13 +352,13 @@ def all_lcurves(show = False, directory = None):
     #plot together
     plt.clf()
     plt.errorbar(times_f090, flux_f090, yerr=error_f090, fmt='o', capsize=4, label='Flux at f090')
-    plt.scatter(times_f090, fWeights_f090, label='F weighting')
+    plt.scatter(times_f090, fWeights_f090, c='r', marker='*', label='f090 weighting')
     
     plt.errorbar(times_f150, flux_f150, yerr=error_f150, fmt='o', capsize=4, label='Flux at f150')
-    plt.scatter(times_f150, fWeights_f150, label='F weighting')
+    plt.scatter(times_f150, fWeights_f150, c='b', marker='*', label='f150 weighting')
     
     plt.errorbar(times_f220, flux_f220, yerr=error_f220, fmt='o', capsize=4, label='Flux at f220')
-    plt.scatter(times_f220, fWeights_f220, label='F weighting')
+    plt.scatter(times_f220, fWeights_f220, c='g', marker='*', label='f220 weighting')
         
     plt.xlabel("Time (MJD)")
     plt.ylabel("Flux (mJy)")
@@ -420,29 +420,29 @@ def ratios(show = False, directory = None):
     ratio_f090 = []
     ratio_f150 = []    
     ratio_f220 = []    
-    for i in range(len(flux_f090)):
-      r_f090 = flux_f090[i] / fWeights_f090[i]
-      r_f150 = flux_f150[i] / fWeights_f150[i]
-      r_f220 = flux_f220[i] / fWeights_f220[i]
-      
-      ratio_f090.append(r_f090) 
-      ratio_f150.append(r_f150)
-      ratio_f220.append(r_f220)                           
-    
+    for n in range(len(flux_f090)):
+      r_f090 = abs(flux_f090[n] / fWeights_f090[n])
+      ratio_f090.append(r_f090)      
+    for o in range(len(flux_f150)):
+      r_f150 = abs(flux_f150[o] / fWeights_f150[o])
+      ratio_f150.append(r_f150)      
+    for t in range(len(flux_f220)):
+      r_f220 = abs(flux_f220[t] / fWeights_f220[t])
+      ratio_f220.append(r_f220)     
     
     #plot together
     plt.clf()
-    #plt.errorbar(times_f090, flux_f090, yerr=error_f090, fmt='o', capsize=4, label='Flux at f090')
-    plt.scatter(times_f090, ratio_f090, label='F weighting')
+    #f090 ratios
+    plt.scatter(times_f090, ratio_f090, label='f090 ratio')
     
-    #plt.errorbar(times_f150, flux_f150, yerr=error_f150, fmt='o', capsize=4, label='Flux at f150')
-    plt.scatter(times_f150, ratio_f150, label='F weighting')
+    #f150 ratios
+    plt.scatter(times_f150, ratio_f150, label='f150 ratio')
     
-    #plt.errorbar(times_f220, flux_f220, yerr=error_f220, fmt='o', capsize=4, label='Flux at f220')
-    plt.scatter(times_f220, ratio_f220, label='F weighting')
+    #f220 ratios
+    plt.scatter(times_f220, ratio_f220, label='f220 ratio')
         
     plt.xlabel("Time (MJD)")
-    plt.ylabel("F Weight / Flux")
+    plt.ylabel("Flux / F Weighting")
     plt.legend(loc='best')      
     plt.title("Ratios of {name}".format(name=names[i]))
     
