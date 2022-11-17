@@ -16,6 +16,7 @@ import pickle as pk
 import pandas as pd
 from astroquery.jplhorizons import Horizons
 from astropy.time import Time
+import ephem
 
 def get_desig(id_num):
   '''
@@ -62,6 +63,22 @@ def get_index(name):
   indx = int(num_string)
   return indx
   
+#get phase angle
+def compute_alpha(ra_sun, dec_sun, d_earth_sun, ra_ast, dec_ast, d_earth_ast):
+    x_sun, y_sun, z_sun = d_earth_sun*np.cos(ra_sun)*np.cos(dec_sun), d_earth_sun*np.sin(ra_sun)*np.cos(dec_sun), d_earth_sun*np.sin(dec_sun)
+    x_ast, y_ast, z_ast = d_earth_ast*np.cos(ra_ast)*np.cos(dec_ast), d_earth_ast*np.sin(ra_ast)*np.cos(dec_ast), d_earth_ast*np.sin(dec_ast)
+    #sun_earth_vec = d_earth_sun * utils.ang2rect([[
+    x_ast_sun, y_ast_sun, z_ast_sun = x_ast - x_sun, y_ast - y_sun, z_ast - z_sun
+
+    sun_ast_vec = np.array([x_ast_sun, y_ast_sun, z_ast_sun])
+    earth_ast_vec = np.array([x_ast, y_ast, z_ast])
+
+    cosang = np.dot(sun_ast_vec/np.linalg.norm(sun_ast_vec), earth_ast_vec/np.linalg.norm(earth_ast_vec))
+
+    angle = np.arccos(cosang)
+
+    return angle
+
 #get theory fluxes
 def get_theory(name, freq):
   with open("/home/r/rbond/ricco/minorplanets/theory_flux_dict.pk", 'rb') as f:
@@ -83,6 +100,92 @@ def get_theory(name, freq):
   except KeyError:
     print("Object " + name + " not currently in flux theory file")    
 
+def get_alpha(name, arr, freq, directory = None, show = False, save=False):
+  '''
+    Inputs:
+      name, type: string, name of object we want
+      arr, type: string, ACT array we want
+      freq, type: string, frequency band
+      directory, type: string, optionally save plots in specified directory
+      show, type: boolean, optionally display plot right after calling get_alpha
+      save, type: boolean, optionally save alpha and time data as pickle file
+    
+    Output:
+      phase angle (deg) vs time for object 
+  '''
+  
+  index = get_index(name)
+  
+  #Jack's maps
+  path = "/scratch/r/rbond/jorlo/actxminorplanets/sigurd/asteroids/" + name
+  
+  #get rho, kappa, info files
+  rho_files = glob.glob(path + "/*" + arr + "_" + freq + "_" + "rho.fits")
+  kap_files = [utils.replace(r, "rho.fits", "kappa.fits") for r in rho_files]
+  info_files = [utils.replace(r, "rho.fits", "info.hdf") for r in rho_files]
+  
+  if len(rho_files) != 0:
+    #find time
+    str_times = []
+    t_start = len(path) + len(name) + 9
+    t_end = t_start + 10
+    for time in rho_files:
+      str_times.append(time[t_start:t_end])
+    int_times = [int(t) for t in str_times]
+    
+    alpha_data = []
+    times_data = []
+    for count, t in enumerate(int_times):      
+      #get info
+      info = bunch.read(info_files[count])
+      ctime0 = np.mean(info.period)
+      
+      hour = (ctime0/3600) % 24
+      
+      #daytime maps
+      if (11 < hour < 23):
+        continue
+      
+      #nighttime maps
+      else:
+        #conver time to iso
+        date = Time(t, format='unix')
+        start_iso = date.iso
+        
+        #get ephemerides
+        obj_earth = Horizons(id=name, location='W99', epochs={start_iso},id_type='asteroid_name')
+        eph = obj_earth.ephemerides()
+        
+        #get alpha and time
+        alpha = eph['alpha']
+        alpha_data.append(alpha)
+        time = eph['datetime_jd']
+        times_data.append(time)
+          
+    mjd_date = utils.jd2mjd(times_data)
+      
+    #plot
+    plt.scatter(mjd_date, alpha_data)    
+    plt.xlabel("Time (MJD)")
+    plt.ylabel("alpha (deg)")
+    plt.title("alpha for {name} on {arr} at {freq}".format(name=name, arr=arr, freq=freq))    
+    
+    if show is not False:
+      plt.show()
+      
+    if directory is not None:
+      plt.savefig(directory + "{name}_alpha_plot_{arr}_{freq}.pdf".format(name=name, arr=arr, freq=freq))
+      
+    if save is not False:
+      file_name = "alpha_" + name + ".pk"
+      f = open(file_name, "wb")
+      my_data = [mjd_date, alpha_data]
+      pk.dump(my_data, f)
+      f.close()
+      
+  else:
+      print("No hits")
+
 def one_lcurve(name, arr, freq, directory = None, show = False):
   '''
     Inputs:
@@ -93,7 +196,7 @@ def one_lcurve(name, arr, freq, directory = None, show = False):
       show, type: boolean, optionally display plot right after calling one_lcurve()
     
     Output:
-      Single light curve for desired object
+      Single daytime light curve for desired object with SPT-like F weighting
   '''
   
   index = get_index(name)
@@ -103,14 +206,15 @@ def one_lcurve(name, arr, freq, directory = None, show = False):
   ignore_desig, ignore_name, semimajor_earth = get_desig(index)
   
   #get ref flux
-  ref_flux = get_theory(name, freq)
+  ref_flux = get_theory(name, freq) #gonna need new ref flux with Jack's new F weighting
   
   #Jack's maps
   path = "/scratch/r/rbond/jorlo/actxminorplanets/sigurd/asteroids/" + name
   
-  #get rho and kappa files
+  #get rho, kappa, info files
   rho_files = glob.glob(path + "/*" + arr + "_" + freq + "_" + "rho.fits")
   kap_files = [utils.replace(r, "rho.fits", "kappa.fits") for r in rho_files]
+  info_files = [utils.replace(r, "rho.fits", "info.hdf") for r in rho_files]
   
   if len(rho_files) != 0:
     #find time
@@ -120,6 +224,20 @@ def one_lcurve(name, arr, freq, directory = None, show = False):
     for time in rho_files:
       str_times.append(time[t_start:t_end])
     int_times = [int(t) for t in str_times]
+    start = Time(min(int_times), format='unix')
+    end = Time(max(int_times), format='unix')    
+    start_iso = start.iso
+    end_iso = end.iso
+    
+    #get astroquery data  
+    obj_earth = Horizons(id=name, location='W99', epochs={'start':start_iso, 'stop':end_iso, 'step':'1d'},id_type='asteroid_name')
+    
+    eph = obj_earth.ephemerides()
+    
+    alpha_test = eph['alpha']    
+    
+    time = eph['datetime_jd']
+    mjd_times = utils.jd2mjd(time)
     
     #get geocentric dist
     eph = np.load("/gpfs/fs0/project/r/rbond/sigurdkn/actpol/ephemerides/objects/" + name + ".npy").view(np.recarray)
@@ -136,42 +254,72 @@ def one_lcurve(name, arr, freq, directory = None, show = False):
       
       d_sun_0, d_earth_0 = semimajor_sun, semimajor_earth
       
-      ignore_ra, ignore_dec, delta_earth, delta_sun, ignore_ang = pos
+      ra_ast, dec_ast, delta_earth, delta_sun, ignore_ang = pos
       
-      #F weighting
-      try:
-        F = (d_sun_0)**2 * (d_earth_0)**2 / ((delta_earth)**2*(delta_sun)**2) * ref_flux
-        Fs.append(F)
-      except:
-        print("Unable to generate light curve")
-        break
+      #get info
+      info = bunch.read(info_files[count])
+      ctime0 = np.mean(info.period)
       
-      #open files
-      hdu_rho = fits.open(rho_files[count])
-      hdu_kap = fits.open(kap_files[count])
+      hour = (ctime0/3600) % 24
       
-      #get data
-      data_rho = hdu_rho[0].data
-      data_kap = hdu_kap[0].data
+      #daytime maps
+      if (11 < hour < 23):
+        continue
       
-      #get flux, error, and time
-      flux = data_rho / data_kap
-      good_flux = flux[0, 40, 40]
-      flux_data.append(good_flux)
+      #nighttime maps
+      else:
+        cur_time = Time(ctime0/ 86400. + 40587.0, format = 'mjd') #changed to from JD to MJD
+          
+        sun = ephem.Sun()
+        sun.compute(cur_time.utc.iso)
+          
+        alpha = compute_alpha(sun.ra*np.pi/180, sun.dec*np.pi/180, sun.earth_distance, ra_ast*np.pi/180, dec_ast*np.pi/180, delta_earth)
+        alpha *= (180/np.pi)
+          
+          #F weighting
+        try:
+          F = (delta_earth**(-2) * delta_sun**(-1/2)*10**(-0.004*alpha)) * ref_flux
+          Fs.append(F)
+        except:
+          print("Unable to generate light curve")
+          break
+          
+          #open files
+        hdu_rho = fits.open(rho_files[count])
+        hdu_kap = fits.open(kap_files[count])
+          
+          #get data
+        data_rho = hdu_rho[0].data
+        data_kap = hdu_kap[0].data
+          
+          #get flux, error, and time
+        flux = data_rho / data_kap
+        good_flux = flux[0, 40, 40]
+        flux_data.append(good_flux)
+          
+        err = np.abs(data_kap)**(-0.5)
+        err_data.append(err[0,40,40])
+          
+        times_data.append(t)
+        
+      mjd_date = utils.ctime2mjd(times_data)
       
-      err = np.abs(data_kap)**(-0.5)
-      err_data.append(err[0,40,40])
-      
-      times_data.append(t)
-      
-    mjd_date = utils.ctime2mjd(times_data)
+    plt.scatter(mjd_times, alpha_test)
     
-    plt.errorbar(mjd_date, flux_data, yerr=err_data, fmt='o', capsize=4, label='Flux', zorder=0)
-    plt.scatter(mjd_date, Fs, label='F weighting', c='r', zorder=1)
+    file_name = "alpha_pallas.pk"
+    f = open(file_name, "wb")
+    my_data = [mjd_times, alpha_test]
+    pk.dump(my_data, f)
+    f.close()
+    
+    #plt.errorbar(mjd_date, flux_data, yerr=err_data, fmt='o', capsize=4, label='Flux', zorder=0)
+    #plt.scatter(mjd_date, Fs, label='F weighting', c='r', zorder=1)
     plt.xlabel("Time (MJD)")
-    plt.ylabel("Flux (mJy)")
-    plt.legend(loc = 'best')
-    plt.title("Light curve of {name} on {arr} at {freq}".format(name=name, arr=arr, freq=freq))
+    #plt.ylabel("Flux (mJy)")
+    plt.ylabel("alpha (deg)")
+    #plt.legend(loc = 'best')
+    #plt.title("Light curve of {name} on {arr} at {freq}".format(name=name, arr=arr, freq=freq))
+    plt.title("alpha for {name} on {arr} at {freq}".format(name=name, arr=arr, freq=freq))    
     
     if show is not False:
       plt.show()
@@ -581,6 +729,8 @@ def phases(name, period, freq, show = False, directory = None):
     Phase curve of object given a period
   '''
   
+  pos = period / 24
+  phases = []
   if freq == "f090":
     infile_f090 = open('/scratch/r/rbond/ricco/minorplanets/lcurve_data_f090.pk', 'rb')
     dict_f090 = pk.load(infile_f090)
@@ -589,8 +739,6 @@ def phases(name, period, freq, show = False, directory = None):
     obj =  dict_f090['Name'][get_index(name)]
     
     #get times
-    pos = period / 24
-    phases = [] 
     for t in range(len(dict_f090['Time'][2])):
       num = (dict_f090['Time'][2][t]) % pos
       phases.append(num/pos)
@@ -600,9 +748,10 @@ def phases(name, period, freq, show = False, directory = None):
     error_f090 = dict_f090['Error'][2]
     fWeights = dict_f090['F'][2]
     
-    res = [(fluxs_f090[f]- fWeights[f]) for f in range(len(fluxs_f090))]
+    res = [(fluxs_f090[f] - fWeights[f]) for f in range(len(fluxs_f090))]
     
-    plt.errorbar(phases, res, yerr=error_f090, fmt='o', capsize=4, label='Flux at f090', zorder=0)    
+    plt.errorbar(phases, res, yerr=error_f090, fmt='o', capsize=4, label='Flux at f090', zorder=0)
+    #plt.ylim([-200,200])    
     
   elif freq == "f150":
     #get f150
@@ -612,9 +761,7 @@ def phases(name, period, freq, show = False, directory = None):
   
     obj =  dict_f150['Name'][get_index(name)]
     
-    #get times
-    pos = period / 24
-    phases = [] 
+    #get times 
     for t in range(len(dict_f150['Time'][2])):
       num = (dict_f150['Time'][2][t]) % pos
       phases.append(num/pos)
@@ -636,9 +783,7 @@ def phases(name, period, freq, show = False, directory = None):
 
     obj =  dict_f220['Name'][get_index(name)]
     
-    #get times
-    pos = period / 24
-    phases = [] 
+    #get times 
     for t in range(len(dict_f220['Time'][2])):
       num = (dict_f220['Time'][2][t]) % pos
       phases.append(num/pos)
@@ -648,7 +793,8 @@ def phases(name, period, freq, show = False, directory = None):
     error_f220 = dict_f220['Error'][2]
     fWeights = dict_f220['F'][2]
     
-    res = [(fluxs_f220[f]- fWeights[f]) for f in range(len(fluxs_f220))]
+    res = [(fluxs_f220[f] - fWeights[f]) for f in range(len(fluxs_f220))]
+    #res = [(fluxs_f220[f] - fWeights[f]) for f in range(len(fluxs_f220))]
     
     plt.errorbar(phases, res, yerr=error_f220, fmt='o', capsize=4, label='Flux at f220', zorder=0)
 
@@ -771,7 +917,8 @@ def all_arrays(name, freq, directory = None, show = False):
 #all_lcurves(show = True)
 #ratios(show = True)
 #lcurves("pa5", "f150", show=True)
-#one_lcurve("Ceres", "pa5", "f150", show=True)
+#one_lcurve("Pallas", "pa4", "f150", show=True)
 #test_weights("Interamnia", "pa5", "f150", show=True)
-#phases("Interamnia", 8.727, "f090",show=True)
-all_arrays("Pallas", "f150")
+#phases("Bamberga", 29.43, "f090",show=True)
+#all_arrays("Pallas", "f150")
+get_alpha("Pallas", "pa4", "f150", show=True)
