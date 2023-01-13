@@ -64,46 +64,6 @@ def get_index(name):
   
   indx = int(num_string)
   return indx
-  
-#get phase angle - Jack
-def compute_alpha(ra_sun, dec_sun, d_earth_sun, ra_ast, dec_ast, d_earth_ast):
-    x_sun, y_sun, z_sun = d_earth_sun*np.cos(ra_sun)*np.cos(dec_sun), d_earth_sun*np.sin(ra_sun)*np.cos(dec_sun), d_earth_sun*np.sin(dec_sun)
-    x_ast, y_ast, z_ast = d_earth_ast*np.cos(ra_ast)*np.cos(dec_ast), d_earth_ast*np.sin(ra_ast)*np.cos(dec_ast), d_earth_ast*np.sin(dec_ast)
-    #sun_earth_vec = d_earth_sun * utils.ang2rect([[
-    x_ast_sun, y_ast_sun, z_ast_sun = x_ast - x_sun, y_ast - y_sun, z_ast - z_sun
-
-    sun_ast_vec = np.array([x_ast_sun, y_ast_sun, z_ast_sun])
-    earth_ast_vec = np.array([x_ast, y_ast, z_ast])
-
-    cosang = np.dot(sun_ast_vec/np.linalg.norm(sun_ast_vec), earth_ast_vec/np.linalg.norm(earth_ast_vec))
-
-    angle = np.arccos(cosang)
-
-    return angle
-
-def get_ephem(objname, ctime):
-  """Simple wrapper around pyephem. Returns astrometric ra, dec, rad (AU)
-  for each specified ctime."""
-  djd = utils.ctime2djd(ctime)
-  res = np.zeros((3,)+djd.shape)
-  obj = getattr(ephem, objname)()
-  for I in utils.nditer(djd.shape):
-    obj.compute(djd[I])
-    res[0,I] = obj.a_ra
-    res[1,I] = obj.a_dec
-    res[2,I] = obj.earth_distance
-  return res
-  
-def compute_alpha_sigurd(d_ast):
-  # Earth-to-asteroid vector
-  v_ea    = utils.ang2rect([d_ast.ra*utils.degree, d_ast.dec*utils.degree])*d_ast.r
-  # Earth-to-sun vector
-  pos_sun = get_ephem("Sun", d_ast.ctime)
-  v_es    = utils.ang2rect([pos_sun[0], pos_sun[1]])*pos_sun[2]
-  # Sun angle is angle between ast→sun vector and ast→earth vector
-  sunang  = utils.vec_angdist(-v_ea, -v_ea+v_es)
-  
-  return sunang  
 
 #get theory fluxes
 def get_theory(name, freq):
@@ -125,6 +85,14 @@ def get_theory(name, freq):
   
   except KeyError:
     print("Object " + name + " not currently in flux theory file")      
+
+def inv_var(data, variances):
+    ave = 0
+    var = 0
+    for i in range(len(data)):
+        ave += data[i]/variances[i]
+        var += 1/variances[i]
+    return ave/var, 1/var
 
 #get alpha - astroquery
 def get_alpha(name, arr, freq, directory = None, show = False, save=False):
@@ -211,7 +179,7 @@ def get_alpha(name, arr, freq, directory = None, show = False, save=False):
   else:
       print("No hits")
 
-def one_lcurve(name, arr, freq, directory = None, show = False):
+def one_lcurve(name, arr, freq, directory = None, show = False, pickle = False):
   '''
     Inputs:
       name, type: string, name of object we want
@@ -266,13 +234,7 @@ def one_lcurve(name, arr, freq, directory = None, show = False):
     err_data = []
     times_data = []
         
-    r_ast = []
-    ra_ast = []
-    dec_ast = []
     night_times = []    
-    d_earth = []
-    d_sun = []
-    ctime = []
     Fs = []
     
     for count, t in enumerate(int_times):      
@@ -300,9 +262,6 @@ def one_lcurve(name, arr, freq, directory = None, show = False):
         dec_ast = tables['DEC'][0]
         d_earth = tables['delta'][0] #earth-asteroid distance
         d_sun = tables['r'][0] #sun-asteroid distance
-        
-        night_times.append(t)
-        #ctime.append(ctime0)
           
         #find sun angle using vectors
         cur_time = Time(ctime0/86400. + 40587.0, format = 'mjd')
@@ -310,35 +269,44 @@ def one_lcurve(name, arr, freq, directory = None, show = False):
         sun = ephem.Sun()
         sun.compute(cur_time.utc.iso)
                 
+        #vectors        
         v_ea = utils.ang2rect([ra_ast*utils.degree, dec_ast*utils.degree])*r_ast
         v_es = utils.ang2rect([sun.ra, sun.dec])*sun.earth_distance
         sunang = utils.vec_angdist(-v_ea, -v_ea+v_es) / utils.degree
         
-        F_weight = (d_earth**(-2) * d_sun**(-1/2)*10**(-0.004*sunang)) * ref_flux 
-        Fs.append(F_weight)                                  
-          
-        #open files
-        hdu_rho = fits.open(rho_files[count])
-        hdu_kap = fits.open(kap_files[count])
+        #F weights
+        F_weight = (d_earth**(-2) * d_sun**(-1/2)*10**(-0.004*sunang)) * ref_flux                             
           
         #get data
-        data_rho = hdu_rho[0].data
-        data_kap = hdu_kap[0].data
+        kappa = enmap.read_map(kap_files[count])
+        rho = enmap.read_map(rho_files[count])
           
-        #get flux, error, and time
-        flux = data_rho / data_kap
-        good_flux = flux[0, 40, 40]
-        flux_data.append(good_flux)
+        #cut bad maps       
+        tol = 1e-2
+        r = 5
+        mask = kappa > np.max(kappa)*tol
+        mask = mask.distance_transform(rmax=r) >= r 
+        rho *= mask
+        kappa *= mask
+        
+        if kappa[0,:,:].at([0,0]) <= 1e-9:
+          continue         
+        else:        
+          #get flux, error, and time
+          flux = rho / kappa 
+          good_flux = flux[0].at([0, 0])
+          flux_data.append(good_flux)
+            
+          err = np.abs(kappa)**(-0.5) 
+          err_data.append(err[0].at([0,0]))
           
-        err = np.abs(data_kap)**(-0.5)
-        err_data.append(err[0,40,40])
-        
-        times_data.append(t)
-        
-    mjd_date = utils.ctime2mjd(times_data)
+          night_times.append(t)
+          Fs.append(F_weight)          
+          
     night_mjd = utils.ctime2mjd(night_times)
     
-    plt.errorbar(mjd_date, flux_data, yerr=err_data, fmt='o', capsize=4, label='Flux', zorder=0)
+    plt.clf()
+    plt.errorbar(night_mjd, flux_data, yerr=err_data, fmt='o', capsize=4, label='Flux', zorder=0)#err_data
     plt.scatter(night_mjd, Fs, label='F weighting', c='r', zorder=1)
     plt.plot(mjd_times, best_F, label='Best fit weighting', ls='--', color=Blues_9.hex_colors[-2])
     plt.fill_between(mjd_times, 0.95*best_F, 1.05*best_F, label='95% uncertainty', fc=Blues_9.hex_colors[-2], alpha=0.4)
@@ -347,21 +315,122 @@ def one_lcurve(name, arr, freq, directory = None, show = False):
     plt.legend(loc = 'best')
     plt.title("Light curve of {name} on {arr} at {freq}".format(name=name, arr=arr, freq=freq))         
     
-    #pickle test
-    #data_dict = {'Name': name, 'Array': arr, 'Frequency': freq, 'Flux': flux_data, 'F': Fs, 'Time': mjd_date, 'Error': err_data, 'Ref Flux': ref_flux}
-    #filename = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_vesta.pk"
-    #outfile = open(filename, 'wb')
-    #pk.dump(data_dict, outfile)
-    #outfile.close() 
-    
     if show is not False:
       plt.show()
       
     if directory is not None:
       plt.savefig(directory + "{name}_light_curve_{arr}_{freq}.pdf".format(name=name, arr=arr, freq=freq))
       
+    if pickle is not False:
+      data_dict = {'Name': name, 'Array': arr, 'Frequency': freq, 'Flux': flux_data, 'F': Fs, 'Time': night_mjd, 'Error': err_data, 'Ref Flux': ref_flux, 'astroq F weight': best_F, 'astroq Times': mjd_times}
+      filename = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_" + name + "_" + freq +".pk"
+      outfile = open(filename, 'wb')
+      pk.dump(data_dict, outfile)
+      outfile.close()
+      
   else:
       print("No hits")
+      
+def one_lcurve_fit(show=False, directory=None):
+  '''
+    Input
+    Output
+  '''
+  #get f090
+  infile_f090 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_Vesta_f090.pk", 'rb')
+  dict_f090 = pk.load(infile_f090)
+  infile_f090.close()
+  
+  #get f150
+  infile_f150 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_Vesta_f150.pk", 'rb')
+  dict_f150 = pk.load(infile_f150)
+  infile_f150.close()
+    
+  #get f220
+  infile_f220 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_Vesta_f220.pk", 'rb')
+  dict_f220 = pk.load(infile_f220)
+  infile_f220.close()
+  
+  names = dict_f090['Name']  
+       
+  #get times, fluxs, Fs, errors
+  times_f090 = dict_f090['Time']
+  flux_f090 = dict_f090['Flux']
+  fWeights_f090 = dict_f090['F']
+  error_f090 = dict_f090['Error']
+  ref_F_weight_f090 = dict_f090['astroq F weight']
+  fit_times_f090 = dict_f090['astroq Times']
+  
+  times_f150 = dict_f150['Time']
+  flux_f150 = dict_f150['Flux']
+  fWeights_f150 = dict_f150['F']
+  error_f150 = dict_f150['Error']
+  ref_F_weight_f150 = dict_f150['astroq F weight']
+  fit_times_f150 = dict_f150['astroq Times']
+    
+  times_f220 = dict_f220['Time']
+  flux_f220 = dict_f220['Flux']
+  fWeights_f220 = dict_f220['F']
+  error_f220 = dict_f220['Error']
+  ref_F_weight_f220 = dict_f220['astroq F weight']
+  fit_times_f220 = dict_f220['astroq Times']  
+    
+  #plot together
+  plt.clf()    
+    
+  #f090
+  #amp_f090 = np.sum(flux_f090*ref_F_weight_f090/error_f090**2)/np.sum(ref_F_weight_f090**2/error_f090**2)
+  #fitted_curve_f090 = amp_f090 * ref_F_weight_f090
+    
+  #plt.plot(fit_times_f090, fitted_curve_f090)
+  #plt.errorbar(times_f090, flux_f090, yerr=error_f090, fmt='o', capsize=4, label='Flux at 90 GHz', zorder=0)
+  time_temp_f090 = Time(times_f090, format='mjd')
+  plt.errorbar(time_temp_f090.decimalyear, flux_f090, yerr=error_f090, fmt='o', capsize=4, label='Measured Flux at 90 GHz', zorder=0, color='blue')
+  #plt.scatter(times_f090, fWeights_f090, label='F weighting', c='r', zorder=1)
+  fit_temp_f090 = Time(fit_times_f090, format='mjd')
+  plt.plot(fit_temp_f090.decimalyear, ref_F_weight_f090, label='Reference Flux', ls='--', color='blue')#Blues_9.hex_colors[-2]
+  plt.fill_between(fit_temp_f090.decimalyear, 0.95*ref_F_weight_f090, 1.05*ref_F_weight_f090, label='95% uncertainty', fc='blue', alpha=0.4)#Blues_9.hex_colors[-2]  
+
+  #f150
+  #amp_f150 = [np.sum(flux_f150[i]*fWeights_f150[i]/error_f150[i]**2)/np.sum(fWeights_f150[i]**2/error_f150[i]**2) for i in range(len(flux_f150))]
+  #fitted_curve_f150 = [amp_f150[i] * fWeights_f150[i] for i in range(len(fWeights_f150))]
+    
+  #plt.plot(times_f150, fitted_curve_f150)
+  #plt.errorbar(times_f150, flux_f150, yerr=error_f150, fmt='o', capsize=4, label='Flux at 150 GHz', zorder=0)
+  time_temp_f150 = Time(times_f150, format='mjd')
+  plt.errorbar(time_temp_f150.decimalyear, flux_f150, yerr=error_f150, fmt='+', capsize=4, label='Measured Flux at 150 GHz', zorder=0, color='orange')
+  #plt.scatter(times_f150, fWeights_f150, c='r', zorder=1)
+  fit_temp_f150 = Time(fit_times_f150, format='mjd')
+  plt.plot(fit_temp_f150.decimalyear, ref_F_weight_f150, ls='--', color='orange')
+  plt.fill_between(fit_temp_f150.decimalyear, 0.95*ref_F_weight_f150, 1.05*ref_F_weight_f150, fc='orange', alpha=0.4)  
+    
+  #f220
+  #amp_f220 = [np.sum(flux_f220[i]*fWeights_f220[i]/error_f220[i]**2)/np.sum(fWeights_f220[i]**2/error_f220[i]**2) for i in range(len(flux_f220))]
+  #fitted_curve_f220 = [amp_f220[i] * fWeights_f220[i] for i in range(len(fWeights_f220))]
+    
+  #plt.plot(times_f220, fitted_curve_f220)
+  #plt.errorbar(times_f220, flux_f220, yerr=error_f220, fmt='o', capsize=4, label='Flux at 220 GHz', zorder=0)
+  time_temp_f220 = Time(times_f220, format='mjd')
+  plt.errorbar(time_temp_f220.decimalyear, flux_f220, yerr=error_f220, fmt='*', capsize=4, label='Measured Flux at 220 GHz', zorder=0, color='green')
+  #plt.scatter(times_f220, fWeights_f220, c='r', zorder=1)
+  fit_temp_f220 = Time(fit_times_f220, format='mjd')
+  plt.plot(fit_temp_f220.decimalyear, ref_F_weight_f220, ls='--', color='green')
+  plt.fill_between(fit_temp_f220.decimalyear, 0.95*ref_F_weight_f220, 1.05*ref_F_weight_f220, fc='green', alpha=0.4)      
+        
+  plt.xlabel("Time (yr)")
+  plt.ylabel("Flux (mJy)")
+  plt.legend(loc='best')      
+  plt.title("Light curves of {name} across 90 - 220 GHz".format(name=names))
+    
+  if show is not False:
+    plt.show()  
+      
+  if directory is not None:
+    plt.savefig(directory + "{name}_light_curves.pdf".format(name=names[i])) 
+
+
+  #amp = np.sum(data*curve/uncertainty**2)/np.sum(curve**2/uncertainty**2)
+  #fitted_curve = amp*curve
 
 def lcurves(arr, freq, n, directory = None, show = False):
   '''
@@ -387,8 +456,7 @@ def lcurves(arr, freq, n, directory = None, show = False):
 
   for i in range(n):    
     #get semimajor axis and name
-    ignore_desig, name, semimajor_sun = get_desig(i)
-    ignore_desig, ignore_name, semimajor_earth = get_desig(i)
+    ignore_desig, name, ignore_semimajor_sun = get_desig(i)
     Objects.append(name)
     Array.append(arr)
     Frequency.append(freq)
@@ -418,24 +486,25 @@ def lcurves(arr, freq, n, directory = None, show = False):
       start_iso = start.iso
       end_iso = end.iso
       
+      #get astroquery data to create line of best fit
+      obj_earth = Horizons(id=name, location='W99',  epochs={'start':start_iso, 'stop':end_iso, 'step':'1d'},id_type='asteroid_name')
+      eph = obj_earth.ephemerides()
       
+      time = eph['datetime_jd']
+      mjd_times = utils.jd2mjd(time)
+      delta_earth_best = eph['delta'] #earth-asteroid distance
+      delta_sun_best = eph['r'] #sun-asteroid distance
+      alpha_best = eph['alpha']
       
-      #get geocentric dist
-      eph = np.load("/gpfs/fs0/project/r/rbond/sigurdkn/actpol/ephemerides/objects/" + name + ".npy").view(np.recarray)
-      orbit = interpolate.interp1d(eph.ctime, [utils.unwind(eph.ra*utils.degree), eph.dec*utils.degree, eph.r, eph.rsun, eph.ang*utils.arcsec], kind=3)
+      best_F = (delta_earth_best**(-2) * delta_sun_best**(-1/2)*10**(-0.004*alpha_best)) * ref_flux
       
       flux_data = []
       err_data = []
       times_data = []
+      
+      night_times = []
       Fs = []
-      for count, t in enumerate(int_times):
-        #get distances
-        pos = orbit(t)
-        
-        d_sun_0, d_earth_0 = semimajor_sun, semimajor_earth 
-        
-        ra_ast, dec_ast, delta_earth, delta_sun, ignore_ang = pos
-        
+      for count, t in enumerate(int_times):        
         #get info
         info = bunch.read(info_files[count])
         ctime0 = np.mean(info.period)
@@ -448,71 +517,83 @@ def lcurves(arr, freq, n, directory = None, show = False):
           
         #nighttime maps
         else:
+          #convert time
+          time_temp = Time(t, format='unix')
+          time_iso = time_temp.iso
+          eph_table = Horizons(id=name, location='W99', epochs={time_iso}, id_type='asteroid_name')
+          tables = eph_table.ephemerides()
+          
+          #get instantaneous ephemerides
+          r_ast = tables['delta'][0] #earth-asteroid distance
+          ra_ast = tables['RA'][0]
+          dec_ast = tables['DEC'][0]
+          d_earth = tables['delta'][0] #earth-asteroid distance
+          d_sun = tables['r'][0] #sun-asteroid distance
+          
+          night_times.append(t)
+          
+          #find sun angle using vectors        
           cur_time = Time(ctime0/86400. + 40587.0, format = 'mjd')
           
           sun = ephem.Sun()
           sun.compute(cur_time.utc.iso)
           
-          alpha = compute_alpha(sun.ra*np.pi/180, sun.dec*np.pi/180, sun.earth_distance, ra_ast*np.pi/180, dec_ast*np.pi/180, delta_earth)
-          alpha *= (180/np.pi)
+          v_ea = utils.ang2rect([ra_ast*utils.degree, dec_ast*utils.degree])*r_ast
+          v_es = utils.ang2rect([sun.ra, sun.dec])*sun.earth_distance
+          sunang = utils.vec_angdist(-v_ea, -v_ea+v_es) / utils.degree
         
           #F weighting
-          try:
-            F = (delta_earth**(-2) * delta_sun**(-1/2)*10**(-0.004*alpha)) * ref_flux
-            Fs.append(F)
-          except TypeError:
-            print("Unable to generate light curve")
-            break    
+          F_weight = (d_earth**(-2) * d_sun**(-1/2)*10**(-0.004*sungang)) * ref_flux 
+          Fs.append(F)
       
-        #open files
-        hdu_rho = fits.open(rho_files[count])
-        hdu_kap = fits.open(kap_files[count])
+          #open files
+          hdu_rho = fits.open(rho_files[count])
+          hdu_kap = fits.open(kap_files[count])
+          
+          #get data
+          data_rho = hdu_rho[0].data
+          data_kap = hdu_kap[0].data
+          
+          #get flux, error, and time
+          flux = data_rho / data_kap
+          good_flux = flux[0, 40, 40]
+          #print(good_flux)
+          flux_data.append(good_flux)
+          
+          err = np.abs(data_kap)**(-0.5)
+          err_data.append(err[0,40,40])           
         
-        #get data
-        data_rho = hdu_rho[0].data
-        data_kap = hdu_kap[0].data
+        night_mjd = utils.ctime2mjd(night_times)
         
-        #get flux, error, and time
-        flux = data_rho / data_kap
-        good_flux = flux[0, 40, 40]
-        #print(good_flux)
-        flux_data.append(good_flux)
+        plt.clf()
+        plt.errorbar(night_mjd, flux_data, yerr=err_data, fmt='o', capsize=4, label='Flux', zorder=0)
+        plt.scatter(night_mjd, Fs, label='F weighting', c='r', zorder=1)
+        plt.plot(mjd_times, best_F, label='Best fit weighting', ls='--', color=Blues_9.hex_colors[-2])
+        plt.fill_between(mjd_times, 0.95*best_F, 1.05*best_F, label='95% uncertainty', fc=Blues_9.hex_colors[-2], alpha=0.4)
+        plt.xlabel("Time (MJD)")
+        plt.ylabel("Flux (mJy)")
+        plt.legend(loc='best')      
+        plt.title("Light curve of {name} on {arr} at {freq}".format(name=name, arr=arr, freq=freq))
         
-        err = np.abs(data_kap)**(-0.5)
-        err_data.append(err[0,40,40]) 
+        Fluxes.append(flux_data)
+        Errors.append(err_data)
+        Times.append(night_mjd)
+        Weights.append(Fs)
         
-        times_data.append(t)
+        data_dict = {'Name': Objects, 'Array': Array, 'Frequency': Frequency, 'Flux': Fluxes, 'F': Weights, 'Time': Times, 'Error': Errors, 'Ref Flux': Theory}
+        filename = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_" + freq + ".pk"
+        outfile = open(filename, 'wb')
+        pk.dump(data_dict, outfile)
+        outfile.close()
         
+        if show is not False:
+          plt.show()
+          
+        if directory is not None:
+          plt.savefig(directory + "{name}_light_curve_{arr}_{freq}.pdf".format(name=name, arr=arr, freq=freq))
       
-      mjd_date = utils.ctime2mjd(times_data)
-      
-      plt.clf()
-      plt.errorbar(mjd_date, flux_data, yerr=err_data, fmt='o', capsize=4, label='Flux', zorder=0)
-      plt.scatter(mjd_date, Fs, label='F weighting', c='r', zorder=1)
-      plt.xlabel("Time (MJD)")
-      plt.ylabel("Flux (mJy)")
-      plt.legend(loc='best')      
-      plt.title("Light curve of {name} on {arr} at {freq}".format(name=name, arr=arr, freq=freq))
-      
-      Fluxes.append(flux_data)
-      Errors.append(err_data)
-      Times.append(mjd_date)
-      Weights.append(Fs)
-      
-      data_dict = {'Name': Objects, 'Array': Array, 'Frequency': Frequency, 'Flux': Fluxes, 'F': Weights, 'Time': Times, 'Error': Errors, 'Ref Flux': Theory}
-      filename = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_" + freq + ".pk"
-      outfile = open(filename, 'wb')
-      pk.dump(data_dict, outfile)
-      outfile.close()
-      
-      if show is not False:
-        plt.show()
-        
-      if directory is not None:
-        plt.savefig(directory + "{name}_light_curve_{arr}_{freq}.pdf".format(name=name, arr=arr, freq=freq))
-    
-    else:
-      print("No hits")
+      else:
+        print("No hits")
       
 def all_lcurves(show = False, directory = None):
   '''
@@ -592,38 +673,40 @@ def ratios(show = False, directory = None):
   '''
   
   #get f090
-  infile_f090 = open('/scratch/r/rbond/ricco/minorplanets/lcurve_data_f090.pk', 'rb')
+  infile_f090 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_f090.pk", "rb")#open('/scratch/r/rbond/ricco/minorplanets/lcurve_data_f090.pk', 'rb')
   dict_f090 = pk.load(infile_f090)
   infile_f090.close()
   
   #get f150
-  infile_f150 = open('/scratch/r/rbond/ricco/minorplanets/lcurve_data_f150.pk', 'rb')
+  infile_f150 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_f150.pk", "rb")
   dict_f150 = pk.load(infile_f150)
   infile_f150.close()
     
   #get f220
-  infile_f220 = open('/scratch/r/rbond/ricco/minorplanets/lcurve_data_f220.pk', 'rb')
+  infile_f220 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_f220.pk", "rb")
   dict_f220 = pk.load(infile_f220)
   infile_f220.close()
   
   names = dict_f090['Name']  
+  print(names)
+  print(len(names))
       
-  for i in range(100):
+  for i in range(1): #len(dict)?
     #get times, fluxs, Fs, errors
-    times_f090 = dict_f090['Time'][i]
-    flux_f090 = dict_f090['Flux'][i]
-    fWeights_f090 = dict_f090['F'][i]
-    error_f090 = dict_f090['Error'][i]
+    times_f090 = dict_f090['Time']#[i]
+    flux_f090 = dict_f090['Flux']#[i]
+    fWeights_f090 = dict_f090['F']#[i]
+    error_f090 = dict_f090['Error']#[i]
   
-    times_f150 = dict_f150['Time'][i]
-    flux_f150 = dict_f150['Flux'][i]
-    fWeights_f150 = dict_f150['F'][i]
-    error_f150 = dict_f150['Error'][i]
+    times_f150 = dict_f150['Time']#[i]
+    flux_f150 = dict_f150['Flux']#[i]
+    fWeights_f150 = dict_f150['F']#[i]
+    error_f150 = dict_f150['Error']#[i]
     
-    times_f220 = dict_f220['Time'][i]
-    flux_f220 = dict_f220['Flux'][i]
-    fWeights_f220 = dict_f220['F'][i]
-    error_f220 = dict_f220['Error'][i]  
+    times_f220 = dict_f220['Time']#[i]
+    flux_f220 = dict_f220['Flux']#[i]
+    fWeights_f220 = dict_f220['F']#[i]
+    error_f220 = dict_f220['Error']#[i]  
     
     #get ratios
     ratio_f090 = []
@@ -784,7 +867,7 @@ def test_weights(name, arr, freq, show=False, directory=None):
   else:
     print("No hits")
 
-def phases(name, period, freq, show = False, directory = None):
+def phases(name, period, freq, show = False, directory = None, average=False):
   '''
   Inputs:
     name, type: string, name of object we want phase curve for
@@ -816,6 +899,12 @@ def phases(name, period, freq, show = False, directory = None):
     error_f090 = dict_f090['Error']
     fWeights = dict_f090['F']
     
+    #new error propagation
+    #err_data_sqr = [err_data[i]**2 for i in range(len(err_data))]
+    #ignore_ave_var, i_var = inv_var(flux_data, err_data_sqr)
+    #error is now sqrt of i_var
+    #new_err = i_var**0.5    
+    
     res = [(fluxs_f090[f] - fWeights[f]) for f in range(len(fluxs_f090))]
     
     plt.clf()
@@ -825,7 +914,7 @@ def phases(name, period, freq, show = False, directory = None):
     
   elif freq == "f150":
     #get f150
-    infile_f150 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_vesta.pk", 'rb') #open('/scratch/r/rbond/ricco/minorplanets/lcurve_data_f150.pk', 'rb')
+    infile_f150 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_f150.pk", 'rb') #open('/scratch/r/rbond/ricco/minorplanets/lcurve_data_f150.pk', 'rb')
     dict_f150 = pk.load(infile_f150)
     infile_f150.close()  
   
@@ -844,7 +933,41 @@ def phases(name, period, freq, show = False, directory = None):
     res = [(fluxs_f150[f]- fWeights[f]) for f in range(len(fluxs_f150))]
     
     plt.clf()
-    plt.errorbar(phases, res, yerr=error_f150, fmt='o', capsize=4, label='Flux at f150', zorder=0)        
+    if average is not False:
+      tot1 = 0
+      counter1 = 0
+      tot2 = 0
+      counter2 = 0
+      tot3 = 0
+      counter3 = 0
+      tot4 = 0
+      counter4 = 0
+      for count, p in enumerate(phases):
+        if p < 0.5:
+          tot1 += res[count]
+          counter1 += 1
+        elif 0.5 < p < 1:
+          tot2 += res[count]
+          counter2 += 1
+        elif 1 < p < 1.5:
+          tot3 += res[count]
+          counter3 += 1
+        else:
+          tot4 += res[count]
+          counter4 += 1
+      
+      ave1 = tot1 / counter1
+      ave2 = tot2 / counter2
+      ave3 = tot3 / counter3
+      ave4 = tot4 / counter4
+      
+      aves = []
+      aves.append(ave1, ave2, ave3, ave4)
+      plt.plot(np.arange(0,1,0.5), aves, label='Average Flux')
+    
+    else:
+      plt.errorbar(phases, res, yerr=error_f150, fmt='o', capsize=4, label='Flux at f150', zorder=0)
+            
     
   elif freq == "f220":
     #get f220
@@ -1001,7 +1124,7 @@ def period(name, arr, freq, period, directory = None, show = False):
   infile_f090.close()
   
   #get f150
-  infile_f150 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_vesta.pk", 'rb')#open('/scratch/r/rbond/ricco/minorplanets/lcurve_data_f150.pk', 'rb')
+  infile_f150 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_f150.pk", 'rb')#open('/scratch/r/rbond/ricco/minorplanets/lcurve_data_f150.pk', 'rb')
   dict_f150 = pk.load(infile_f150)
   infile_f150.close()
     
@@ -1039,9 +1162,11 @@ def period(name, arr, freq, period, directory = None, show = False):
 #all_lcurves(show = True)
 #ratios(show = True)
 #lcurves("pa5", "f150", 100, show=True)
-one_lcurve("Vesta", "pa5", "f150", show=True) #Hesperia
+one_lcurve("Bamberga", "pa5", "f150", show=True, pickle=False)
+#one_lcurve_fit(show=True)
+#ratios(show=True) 
 #test_weights("Interamnia", "pa5", "f150", show=True)
-#phases("Vesta", 5.34212766, "f150", show=True)
+#phases("Vesta", 5.34212766, "f150", show=True, average=True)
 #all_arrays("Pallas", "f150")
 #get_alpha("Pallas", "pa4", "f150", show=True)
-#period("Vesta", "pa5", "f150",5.34212766, show=True) 
+#period("Vesta", "pa5", "f220",5.34212766, show=True) 
