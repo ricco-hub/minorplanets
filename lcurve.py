@@ -20,6 +20,10 @@ import ephem
 import scipy.signal as signal
 from palettable.colorbrewer.sequential import Blues_9
 from scipy.stats import binned_statistic
+from statistics import mean
+import seaborn as sns
+import sys
+sns.set_theme(style='ticks')
 
 def get_desig(id_num):
   '''
@@ -63,8 +67,11 @@ def get_index(name):
     else:
       num_string += s
   
-  indx = int(num_string)
-  return indx
+  try:
+    indx = int(num_string)
+    return indx
+  except ValueError:
+    print('Object not in current data set')
 
 #get theory fluxes
 def get_theory(name, freq):
@@ -87,13 +94,48 @@ def get_theory(name, freq):
   except KeyError:
     print("Object " + name + " not currently in flux theory file")      
 
+def get_measured_flux(name, arr, freq):
+  '''
+    Inputs
+      name, type: string, capitalized name of asteroid we want flux values for 
+      arr, type: string, ACT array we want
+      freq, type: string, frequency of flux we want
+        NOTE: freq takes the format '150' rather than 'f150' as used elsewhere 
+    Outputs
+      ???flux stack of asteroid name???
+  '''
+  with open('/scratch/r/rbond/jorlo/actxminorplanets/sigurd/fluxes/' + name + '_flux_dict.pk','rb') as f:
+    '''
+    Format: {{day: {arr: freq, var}}}, {night: {arr: {freq, var}}}
+    '''
+    df = pk.load(f)
+  try:
+    print(df)#['flux'] ['night'][arr][freq]['flux']
+  except KeyError:
+    if 'f' in freq:
+      print('Remove character ''f'' for valid frequency')
+    else:
+      print('KeyError')
+
+
 def inv_var(data, variances):
-    ave = 0
-    var = 0
-    for i in range(len(data)):
-        ave += data[i]/variances[i]
-        var += 1/variances[i]
-    return ave/var, 1/var
+  '''
+    Inputs
+      data, type: array of ints/floats, data to be weighted
+      variances, type: array of ints/floats, variances of data
+    Output
+      Inverse-variance weighted average
+  '''
+  ave = 0
+  var = 0
+  for i in range(len(data)):
+    ave += data[i]/variances[i]
+    var += 1/variances[i]
+  return ave/var, 1/var    
+  
+def fit_sin(p,amp,offset):
+  p = np.array(p)
+  return amp * np.sin(4*np.pi*p + offset)
 
 #get alpha - astroquery
 def get_alpha(name, arr, freq, directory = None, show = False, save=False):
@@ -196,7 +238,8 @@ def one_lcurve(name, arr, freq, directory = None, show = False, pickle = False):
   index = get_index(name)
   
   #get ref flux
-  ref_flux = get_theory(name, freq) 
+  ref_flux = get_theory(name, freq)
+  print(ref_flux)     
   
   #Jack's maps
   path = "/scratch/r/rbond/jorlo/actxminorplanets/sigurd/asteroids/" + name
@@ -205,6 +248,9 @@ def one_lcurve(name, arr, freq, directory = None, show = False, pickle = False):
   rho_files = glob.glob(path + "/*" + arr + "_" + freq + "_" + "rho.fits")
   kap_files = [utils.replace(r, "rho.fits", "kappa.fits") for r in rho_files]
   info_files = [utils.replace(r, "rho.fits", "info.hdf") for r in rho_files]
+  
+  if ref_flux is None:
+    len(rho_files) == 0
   
   if len(rho_files) != 0:
     #find time
@@ -223,14 +269,20 @@ def one_lcurve(name, arr, freq, directory = None, show = False, pickle = False):
     obj_earth = Horizons(id=name, location='W99', epochs={'start':start_iso, 'stop':end_iso, 'step':'1d'},id_type='asteroid_name')
     eph = obj_earth.ephemerides()
     
+    el = obj_earth.elements()
+    print(el['period'])
+    
     time = eph['datetime_jd']
     mjd_times = utils.jd2mjd(time)    
     delta_earth_best = eph['delta'] #earth-asteroid distance
     delta_sun_best = eph['r'] #sun-asteroid distance
     alpha_best = eph['alpha'] 
     
-    best_F = (delta_earth_best**(-2) * delta_sun_best**(-1/2)*10**(-0.004*alpha_best)) * ref_flux         
-    
+    try:
+      best_F = (delta_earth_best**(-2) * delta_sun_best**(-1/2)*10**(-0.004*alpha_best)) * ref_flux
+    except TypeError:
+      pass
+      
     flux_data = []
     err_data = []
     times_data = []
@@ -276,7 +328,10 @@ def one_lcurve(name, arr, freq, directory = None, show = False, pickle = False):
         sunang = utils.vec_angdist(-v_ea, -v_ea+v_es) / utils.degree
         
         #F weights
-        F_weight = (d_earth**(-2) * d_sun**(-1/2)*10**(-0.004*sunang)) * ref_flux                             
+        try:
+          F_weight = (d_earth**(-2) * d_sun**(-1/2)*10**(-0.004*sunang)) * ref_flux
+        except:
+          pass                             
           
         #get data
         kappa = enmap.read_map(kap_files[count])
@@ -307,9 +362,9 @@ def one_lcurve(name, arr, freq, directory = None, show = False, pickle = False):
     night_mjd = utils.ctime2mjd(night_times)
     
     plt.clf()
-    plt.errorbar(night_mjd, flux_data, yerr=err_data, fmt='o', capsize=4, label='Flux', zorder=0)#err_data
-    plt.scatter(night_mjd, Fs, label='F weighting', c='r', zorder=1)
-    plt.plot(mjd_times, best_F, label='Best fit weighting', ls='--', color=Blues_9.hex_colors[-2])
+    plt.errorbar(night_mjd, flux_data, yerr=err_data, fmt='o', label='Obs', zorder=0)#capsize=4, 
+    plt.scatter(night_mjd, Fs, label='Theory', c='r', zorder=1)
+    plt.plot(mjd_times, best_F, label='F weighting', ls='--', color=Blues_9.hex_colors[-2])
     plt.fill_between(mjd_times, 0.95*best_F, 1.05*best_F, label='95% uncertainty', fc=Blues_9.hex_colors[-2], alpha=0.4)
     plt.xlabel("Time (MJD)")
     plt.ylabel("Flux (mJy)")
@@ -324,7 +379,7 @@ def one_lcurve(name, arr, freq, directory = None, show = False, pickle = False):
       
     if pickle is not False:
       data_dict = {'Name': name, 'Array': arr, 'Frequency': freq, 'Flux': flux_data, 'F': Fs, 'Time': night_mjd, 'Error': err_data, 'Ref Flux': ref_flux, 'astroq F weight': best_F, 'astroq Times': mjd_times}
-      filename = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_" + name + "_" + freq +".pk"
+      filename = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroids/light_curves/lcurve_data_" + name + "_" + freq +".pk"
       outfile = open(filename, 'wb')
       pk.dump(data_dict, outfile)
       outfile.close()
@@ -332,29 +387,35 @@ def one_lcurve(name, arr, freq, directory = None, show = False, pickle = False):
   else:
       print("No hits")
       
-def one_lcurve_fit(show=False, directory=None):
+def lcurve_freq(name, show=False, directory=None):
   '''
     Input
+      name, type: string, name of object we want
+      show, type: boolean, optionally display plot after running script
+      directory, type: string, optionally save plots in specified directory
+      
+      Need to run lcurve first, or have access to lcurve data in order to plot across all frequencies
     Output
+      Plot of light curves across all frequencies
   '''
   #get f090
-  infile_f090 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_Vesta_f090.pk", 'rb')
+  infile_f090 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroids/light_curves/lcurve_data_" + name +"_f090.pk", 'rb')
   dict_f090 = pk.load(infile_f090)
   infile_f090.close()
   
   #get f150
-  infile_f150 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_Vesta_f150.pk", 'rb')
+  infile_f150 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroids/light_curves/lcurve_data_" + name +"_f150.pk", 'rb')
   dict_f150 = pk.load(infile_f150)
   infile_f150.close()
     
   #get f220
-  infile_f220 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_Vesta_f220.pk", 'rb')
+  infile_f220 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroids/light_curves/lcurve_data_" + name +"_f220.pk", 'rb')
   dict_f220 = pk.load(infile_f220)
   infile_f220.close()
   
   names = dict_f090['Name']  
        
-  #get times, fluxs, Fs, errors
+  #get times, fluxs, Fs, errors and fits
   times_f090 = dict_f090['Time']
   flux_f090 = dict_f090['Flux']
   fWeights_f090 = dict_f090['F']
@@ -378,47 +439,23 @@ def one_lcurve_fit(show=False, directory=None):
     
   #plot together
   plt.clf()    
-    
+  
   #f090
-  #amp_f090 = np.sum(flux_f090*ref_F_weight_f090/error_f090**2)/np.sum(ref_F_weight_f090**2/error_f090**2)
-  #fitted_curve_f090 = amp_f090 * ref_F_weight_f090
-    
-  #plt.plot(fit_times_f090, fitted_curve_f090)
-  #plt.errorbar(times_f090, flux_f090, yerr=error_f090, fmt='o', capsize=4, label='Flux at 90 GHz', zorder=0)
-  time_temp_f090 = Time(times_f090, format='mjd')
-  plt.errorbar(time_temp_f090.decimalyear, flux_f090, yerr=error_f090, fmt='o', capsize=4, label='Measured Flux at 90 GHz', zorder=0, color='blue')
-  #plt.scatter(times_f090, fWeights_f090, label='F weighting', c='r', zorder=1)
-  fit_temp_f090 = Time(fit_times_f090, format='mjd')
-  plt.plot(fit_temp_f090.decimalyear, ref_F_weight_f090, label='Reference Flux', ls='--', color='blue')#Blues_9.hex_colors[-2]
-  plt.fill_between(fit_temp_f090.decimalyear, 0.95*ref_F_weight_f090, 1.05*ref_F_weight_f090, label='95% uncertainty', fc='blue', alpha=0.4)#Blues_9.hex_colors[-2]  
+  plt.errorbar(times_f090, flux_f090, yerr=error_f090, fmt='.', label='Obs at 90 GHz', zorder=0, color='blue')
+  plt.plot(fit_times_f090, ref_F_weight_f090, label='Theory', ls='--', color='blue')
+  plt.fill_between(fit_times_f090, 0.95*ref_F_weight_f090, 1.05*ref_F_weight_f090, label='95% uncertainty', fc='blue', alpha=0.4)  
 
   #f150
-  #amp_f150 = [np.sum(flux_f150[i]*fWeights_f150[i]/error_f150[i]**2)/np.sum(fWeights_f150[i]**2/error_f150[i]**2) for i in range(len(flux_f150))]
-  #fitted_curve_f150 = [amp_f150[i] * fWeights_f150[i] for i in range(len(fWeights_f150))]
-    
-  #plt.plot(times_f150, fitted_curve_f150)
-  #plt.errorbar(times_f150, flux_f150, yerr=error_f150, fmt='o', capsize=4, label='Flux at 150 GHz', zorder=0)
-  time_temp_f150 = Time(times_f150, format='mjd')
-  plt.errorbar(time_temp_f150.decimalyear, flux_f150, yerr=error_f150, fmt='+', capsize=4, label='Measured Flux at 150 GHz', zorder=0, color='orange')
-  #plt.scatter(times_f150, fWeights_f150, c='r', zorder=1)
-  fit_temp_f150 = Time(fit_times_f150, format='mjd')
-  plt.plot(fit_temp_f150.decimalyear, ref_F_weight_f150, ls='--', color='orange')
-  plt.fill_between(fit_temp_f150.decimalyear, 0.95*ref_F_weight_f150, 1.05*ref_F_weight_f150, fc='orange', alpha=0.4)  
+  plt.errorbar(times_f150, flux_f150, yerr=error_f150, fmt='.', label='Obs at 150 GHz', zorder=0, color='orange')
+  plt.plot(fit_times_f150, ref_F_weight_f150, ls='--', color='orange')
+  plt.fill_between(fit_times_f150, 0.95*ref_F_weight_f150, 1.05*ref_F_weight_f150, fc='orange', alpha=0.4)  
     
   #f220
-  #amp_f220 = [np.sum(flux_f220[i]*fWeights_f220[i]/error_f220[i]**2)/np.sum(fWeights_f220[i]**2/error_f220[i]**2) for i in range(len(flux_f220))]
-  #fitted_curve_f220 = [amp_f220[i] * fWeights_f220[i] for i in range(len(fWeights_f220))]
-    
-  #plt.plot(times_f220, fitted_curve_f220)
-  #plt.errorbar(times_f220, flux_f220, yerr=error_f220, fmt='o', capsize=4, label='Flux at 220 GHz', zorder=0)
-  time_temp_f220 = Time(times_f220, format='mjd')
-  plt.errorbar(time_temp_f220.decimalyear, flux_f220, yerr=error_f220, fmt='*', capsize=4, label='Measured Flux at 220 GHz', zorder=0, color='green')
-  #plt.scatter(times_f220, fWeights_f220, c='r', zorder=1)
-  fit_temp_f220 = Time(fit_times_f220, format='mjd')
-  plt.plot(fit_temp_f220.decimalyear, ref_F_weight_f220, ls='--', color='green')
-  plt.fill_between(fit_temp_f220.decimalyear, 0.95*ref_F_weight_f220, 1.05*ref_F_weight_f220, fc='green', alpha=0.4)      
+  plt.errorbar(times_f220, flux_f220, yerr=error_f220, fmt='.', label='Obs at 220 GHz', zorder=0, color='green')
+  plt.plot(fit_times_f220, ref_F_weight_f220, ls='--', color='green')
+  plt.fill_between(fit_times_f220, 0.95*ref_F_weight_f220, 1.05*ref_F_weight_f220, fc='green', alpha=0.4)      
         
-  plt.xlabel("Time (yr)")
+  plt.xlabel("Time (MJD)")
   plt.ylabel("Flux (mJy)")
   plt.legend(loc='best')      
   plt.title("Light curves of {name} across 90 - 220 GHz".format(name=names))
@@ -427,11 +464,7 @@ def one_lcurve_fit(show=False, directory=None):
     plt.show()  
       
   if directory is not None:
-    plt.savefig(directory + "{name}_light_curves.pdf".format(name=names[i])) 
-
-
-  #amp = np.sum(data*curve/uncertainty**2)/np.sum(curve**2/uncertainty**2)
-  #fitted_curve = amp*curve
+    plt.savefig(directory + "{name}_light_curves.pdf".format(name=names)) 
 
 def lcurves(arr, freq, n, directory = None, show = False, pickle=False):
   '''
@@ -564,9 +597,9 @@ def lcurves(arr, freq, n, directory = None, show = False, pickle=False):
       night_mjd = utils.ctime2mjd(night_times)
           
       plt.clf()
-      plt.errorbar(night_mjd, flux_data, yerr=err_data, fmt='o', capsize=4, label='Flux', zorder=0)
-      plt.scatter(night_mjd, Fs, label='F weighting', c='r', zorder=1)
-      plt.plot(mjd_times, best_F, label='Best fit weighting', ls='--', color=Blues_9.hex_colors[-2])
+      plt.errorbar(night_mjd, flux_data, yerr=err_data, fmt='o', label='Obs', zorder=0)
+      plt.scatter(night_mjd, Fs, label='Theory', c='r', zorder=1)
+      plt.plot(mjd_times, best_F, label='F weighting', ls='--', color=Blues_9.hex_colors[-2])
       plt.fill_between(mjd_times, 0.95*best_F, 1.05*best_F, label='95% uncertainty', fc=Blues_9.hex_colors[-2], alpha=0.4)
       plt.xlabel("Time (MJD)")
       plt.ylabel("Flux (mJy)")
@@ -601,17 +634,17 @@ def all_lcurves(show = False, directory = None):
   '''
   
   #get f090
-  infile_f090 = open('/scratch/r/rbond/ricco/minorplanets/lcurve_data_f090.pk', 'rb')
+  infile_f090 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_Vesta_f090.pk", 'rb')
   dict_f090 = pk.load(infile_f090)
   infile_f090.close()
   
   #get f150
-  infile_f150 = open('/scratch/r/rbond/ricco/minorplanets/lcurve_data_f150.pk', 'rb')
+  infile_f150 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_Vesta_f150.pk", 'rb')
   dict_f150 = pk.load(infile_f150)
   infile_f150.close()
     
   #get f220
-  infile_f220 = open('/scratch/r/rbond/ricco/minorplanets/lcurve_data_f220.pk', 'rb')
+  infile_f220 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_Vesta_f220.pk", 'rb')
   dict_f220 = pk.load(infile_f220)
   infile_f220.close()
   
@@ -861,11 +894,12 @@ def test_weights(name, arr, freq, show=False, directory=None):
   else:
     print("No hits")
 
-def phases(name, period, freq, show = False, directory = None, average=False):
+def phases(name, period, n, freq, show = False, directory = None, average=False):
   '''
   Inputs:
     name, type: string, name of object we want phase curve for
     period, type: float, rotational period of object in hours
+    n, type: integer, number of bins
     freq, type: string, frequency we want to look at
     directory, type: string, optionally save file in directory
     show, type: boolean, if true, display light curve after calling lcurve
@@ -877,7 +911,7 @@ def phases(name, period, freq, show = False, directory = None, average=False):
   pos = period / 24
   phases = []
   if freq == "f090":
-    infile_f090 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_" + name +"_f090.pk", 'rb')
+    infile_f090 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroids/light_curves/lcurve_data_" + name +"_f090.pk", 'rb')
     dict_f090 = pk.load(infile_f090)
     infile_f090.close()
 
@@ -897,57 +931,42 @@ def phases(name, period, freq, show = False, directory = None, average=False):
     
     plt.clf()
     if average is not False:
-      phase_bins = [0.1, 0.3, 0.5, 0.7, 0.9]
-      mean_stat = binned_statistic(phases, res, statistic='mean', bins=5, range = (0,1))
-      
-      #error propagation
+      interval = 1/n
+      center = interval * 0.5      
+      phase_bins = np.arange(0,1,interval) + center 
+            
+      #inverse weighting
       err_prop = []
+      ave_var = []
       
-      err_bin1 = [error_f090[i] for i in range(len(phases)) if phases[i] <= 0.2]
-      flux_bin1 = [fluxs_f090[i] for i in range(len(phases)) if phases[i] <= 0.2]
-      err_data_sqr1 = [err_bin1[i]**2 for i in range(len(err_bin1))]
-      ignore_ave_var, i_var1 = inv_var(flux_bin1, err_data_sqr1)
-      new_err1 = i_var1**0.5
-      err_prop.append(new_err1)
-      
-      err_bin2 = [error_f090[i] for i in range(len(phases)) if phases[i] > 0.2 and phases[i] <= 0.4]
-      flux_bin2 = [fluxs_f090[i] for i in range(len(phases)) if phases[i] > 0.2 and phases[i] <= 0.4]
-      err_data_sqr2 = [err_bin2[i]**2 for i in range(len(err_bin2))]
-      ignore_ave_var, i_var2 = inv_var(flux_bin2, err_data_sqr2)
-      new_err2 = i_var2**0.5
-      err_prop.append(new_err2)      
-      
-      err_bin3 = [error_f090[i] for i in range(len(phases)) if phases[i] > 0.4 and phases[i] <= 0.6]
-      flux_bin3 = [fluxs_f090[i] for i in range(len(phases)) if phases[i] > 0.4 and phases[i] <= 0.6]
-      err_data_sqr3 = [err_bin3[i]**2 for i in range(len(err_bin3))]
-      ignore_ave_var, i_var3 = inv_var(flux_bin3, err_data_sqr3)
-      new_err3 = i_var3**0.5
-      err_prop.append(new_err3)      
-      
-      err_bin4 = [error_f090[i] for i in range(len(phases)) if phases[i] > 0.6 and phases[i] <= 0.8]
-      flux_bin4 = [fluxs_f090[i] for i in range(len(phases)) if phases[i] > 0.6 and phases[i] <= 0.8]
-      err_data_sqr4 = [err_bin4[i]**2 for i in range(len(err_bin4))]
-      ignore_ave_var, i_var4 = inv_var(flux_bin4, err_data_sqr4)
-      new_err4 = i_var4**0.5
-      err_prop.append(new_err4)      
-      
-      err_bin5 = [error_f090[i] for i in range(len(phases)) if phases[i] > 0.8]
-      flux_bin5 = [fluxs_f090[i] for i in range(len(phases)) if phases[i] > 0.8]
-      err_data_sqr5 = [err_bin5[i]**2 for i in range(len(err_bin5))]
-      ignore_ave_var, i_var5 = inv_var(flux_bin5, err_data_sqr5)
-      new_err5 = i_var5**0.5
-      err_prop.append(new_err5)      
+      for i in np.arange(0,1,interval): 
+        err_bin = [error_f090[f] for f in range(len(phases)) if phases[f] >= i and phases[f] <= (i+interval)]
+        #find residuals in bin1 
+        res_bin = [res[r] for r in range(len(phases)) if phases[r] >= i and phases[r] <= (i+interval)]
+        err_data_sqr = [err_bin[e]**2 for e in range(len(err_bin))]
+        ave_var_temp, i_var = inv_var(res_bin, err_data_sqr)
+        new_err = i_var**0.5
+        
+        ave_var.append(ave_var_temp)
+        err_prop.append(new_err)
        
-      #plot
-      plt.errorbar(phase_bins, mean_stat.statistic, yerr=err_prop, fmt='*', capsize=4, label='Average Flux', ls='--', zorder=1,c='r')
-      plt.errorbar(phases, res, yerr=error_f090, fmt='o', capsize=4, label='Flux', zorder=0)
+      res_avg = mean(res)
+      
+      #fit
+      params, params_covariance = optimize.curve_fit(fit_sin, phases, res)      
+      
+      #plot      
+      plt.errorbar(phase_bins, ave_var, yerr=err_prop, fmt='*', label='Inverse-Weighted Average Flux', ls='--', zorder=1)
+      plt.errorbar(phases, res, yerr=error_f090, fmt='o', label='Flux', zorder=0)
+      plt.axhline(y=res_avg, linestyle='-', label='Average Flux', zorder=0)
+      plt.scatter(phases,fit_sin(phases, params[0], params[1]), label='Fitted Ftn.')
       plt.title("Average phase number")
       plt.xlabel("Phase Number")
       plt.ylabel("Flux Residual (mJy)")
       plt.legend(loc='best')
       
     else:    
-      plt.errorbar(phases, res, yerr=error_f090, fmt='o', capsize=4, label='Flux at ' + freq, zorder=0)
+      plt.errorbar(phases, res, yerr=error_f090, fmt='o', label='Flux at ' + freq, zorder=0)
         
     
   elif freq == "f150":
@@ -972,50 +991,35 @@ def phases(name, period, freq, show = False, directory = None, average=False):
     
     plt.clf()
     if average is not False:
-      phase_bins = [0.1, 0.3, 0.5, 0.7, 0.9]
-      mean_stat = binned_statistic(phases, res, statistic='mean', bins=5, range = (0,1))
-      
-      #error propagation
+      interval = 1/n      
+      center = interval * 0.5      
+      phase_bins = np.arange(0,1,interval) + center 
+            
+      #inverse weighting
       err_prop = []
+      ave_var = []
       
-      err_bin1 = [error_f150[i] for i in range(len(phases)) if phases[i] <= 0.2]
-      flux_bin1 = [fluxs_f150[i] for i in range(len(phases)) if phases[i] <= 0.2]
-      err_data_sqr1 = [err_bin1[i]**2 for i in range(len(err_bin1))]
-      ignore_ave_var, i_var1 = inv_var(flux_bin1, err_data_sqr1)
-      new_err1 = i_var1**0.5
-      err_prop.append(new_err1)
+      for i in np.arange(0,1,interval): 
+        err_bin = [error_f150[f] for f in range(len(phases)) if phases[f] >= i and phases[f] <= (i+interval)]
+        #find residuals in bin1 
+        res_bin = [res[r] for r in range(len(phases)) if phases[r] >= i and phases[r] <= (i+interval)]
+        err_data_sqr = [err_bin[e]**2 for e in range(len(err_bin))]
+        ave_var_temp, i_var = inv_var(res_bin, err_data_sqr)
+        new_err = i_var**0.5
+        
+        ave_var.append(ave_var_temp)
+        err_prop.append(new_err)
+       
+      res_avg = mean(res)
       
-      err_bin2 = [error_f150[i] for i in range(len(phases)) if phases[i] > 0.2 and phases[i] <= 0.4]
-      flux_bin2 = [fluxs_f150[i] for i in range(len(phases)) if phases[i] > 0.2 and phases[i] <= 0.4]
-      err_data_sqr2 = [err_bin2[i]**2 for i in range(len(err_bin2))]
-      ignore_ave_var, i_var2 = inv_var(flux_bin2, err_data_sqr2)
-      new_err2 = i_var2**0.5
-      err_prop.append(new_err2)      
-      
-      err_bin3 = [error_f150[i] for i in range(len(phases)) if phases[i] > 0.4 and phases[i] <= 0.6]
-      flux_bin3 = [fluxs_f150[i] for i in range(len(phases)) if phases[i] > 0.4 and phases[i] <= 0.6]
-      err_data_sqr3 = [err_bin3[i]**2 for i in range(len(err_bin3))]
-      ignore_ave_var, i_var3 = inv_var(flux_bin3, err_data_sqr3)
-      new_err3 = i_var3**0.5
-      err_prop.append(new_err3)      
-      
-      err_bin4 = [error_f150[i] for i in range(len(phases)) if phases[i] > 0.6 and phases[i] <= 0.8]
-      flux_bin4 = [fluxs_f150[i] for i in range(len(phases)) if phases[i] > 0.6 and phases[i] <= 0.8]
-      err_data_sqr4 = [err_bin4[i]**2 for i in range(len(err_bin4))]
-      ignore_ave_var, i_var4 = inv_var(flux_bin4, err_data_sqr4)
-      new_err4 = i_var4**0.5
-      err_prop.append(new_err4)      
-      
-      err_bin5 = [error_f150[i] for i in range(len(phases)) if phases[i] > 0.8]
-      flux_bin5 = [fluxs_f150[i] for i in range(len(phases)) if phases[i] > 0.8]
-      err_data_sqr5 = [err_bin5[i]**2 for i in range(len(err_bin5))]
-      ignore_ave_var, i_var5 = inv_var(flux_bin5, err_data_sqr5)
-      new_err5 = i_var5**0.5
-      err_prop.append(new_err5)      
+      #fit
+      params, params_covariance = optimize.curve_fit(fit_sin, phases, res)      
        
       #plot
-      plt.errorbar(phase_bins, mean_stat.statistic, yerr=err_prop, fmt='*', capsize=4, label='Average Flux', ls='--', zorder=1,c='r')
-      plt.errorbar(phases, res, yerr=error_f150, fmt='o', capsize=4, label='Flux', zorder=0)
+      plt.errorbar(phase_bins, ave_var, yerr=err_prop, fmt='*', label='Inverse-Weighted Average Flux', ls='--', zorder=1)
+      plt.errorbar(phases, res, yerr=error_f150, fmt='o', label='Flux', zorder=0)
+      plt.axhline(y=res_avg, linestyle='-', label='Average Flux', zorder=0)      
+      plt.scatter(phases,fit_sin(phases, params[0], params[1]), label='Fitted Ftn.')      
       plt.title("Average phase number")
       plt.xlabel("Phase Number")
       plt.ylabel("Flux Residual (mJy)")
@@ -1023,7 +1027,7 @@ def phases(name, period, freq, show = False, directory = None, average=False):
       
     
     else:
-      plt.errorbar(phases, res, yerr=error_f150, fmt='o', capsize=4, label='Flux at ' + freq, zorder=0)
+      plt.errorbar(phases, res, yerr=error_f150, fmt='o', label='Flux at ' + freq, zorder=0)
             
     
   elif freq == "f220":
@@ -1048,57 +1052,42 @@ def phases(name, period, freq, show = False, directory = None, average=False):
     
     plt.clf()
     if average is not False:
-      phase_bins = [0.1, 0.3, 0.5, 0.7, 0.9]
-      mean_stat = binned_statistic(phases, res, statistic='mean', bins=5, range = (0,1))
-      
-      #error propagation
+      interval = 1/n      
+      center = interval * 0.5      
+      phase_bins = np.arange(0,1,interval) + center 
+            
+      #inverse weighting
       err_prop = []
+      ave_var = []
       
-      err_bin1 = [error_f220[i] for i in range(len(phases)) if phases[i] <= 0.2]
-      flux_bin1 = [fluxs_f220[i] for i in range(len(phases)) if phases[i] <= 0.2]
-      err_data_sqr1 = [err_bin1[i]**2 for i in range(len(err_bin1))]
-      ignore_ave_var, i_var1 = inv_var(flux_bin1, err_data_sqr1)
-      new_err1 = i_var1**0.5
-      err_prop.append(new_err1)
-      
-      err_bin2 = [error_f220[i] for i in range(len(phases)) if phases[i] > 0.2 and phases[i] <= 0.4]
-      flux_bin2 = [fluxs_f220[i] for i in range(len(phases)) if phases[i] > 0.2 and phases[i] <= 0.4]
-      err_data_sqr2 = [err_bin2[i]**2 for i in range(len(err_bin2))]
-      ignore_ave_var, i_var2 = inv_var(flux_bin2, err_data_sqr2)
-      new_err2 = i_var2**0.5
-      err_prop.append(new_err2)      
-      
-      err_bin3 = [error_f220[i] for i in range(len(phases)) if phases[i] > 0.4 and phases[i] <= 0.6]
-      flux_bin3 = [fluxs_f220[i] for i in range(len(phases)) if phases[i] > 0.4 and phases[i] <= 0.6]
-      err_data_sqr3 = [err_bin3[i]**2 for i in range(len(err_bin3))]
-      ignore_ave_var, i_var3 = inv_var(flux_bin3, err_data_sqr3)
-      new_err3 = i_var3**0.5
-      err_prop.append(new_err3)      
-      
-      err_bin4 = [error_f220[i] for i in range(len(phases)) if phases[i] > 0.6 and phases[i] <= 0.8]
-      flux_bin4 = [fluxs_f220[i] for i in range(len(phases)) if phases[i] > 0.6 and phases[i] <= 0.8]
-      err_data_sqr4 = [err_bin4[i]**2 for i in range(len(err_bin4))]
-      ignore_ave_var, i_var4 = inv_var(flux_bin4, err_data_sqr4)
-      new_err4 = i_var4**0.5
-      err_prop.append(new_err4)      
-      
-      err_bin5 = [error_f220[i] for i in range(len(phases)) if phases[i] > 0.8]
-      flux_bin5 = [fluxs_f220[i] for i in range(len(phases)) if phases[i] > 0.8]
-      err_data_sqr5 = [err_bin5[i]**2 for i in range(len(err_bin5))]
-      ignore_ave_var, i_var5 = inv_var(flux_bin5, err_data_sqr5)
-      new_err5 = i_var5**0.5
-      err_prop.append(new_err5)      
+      for i in np.arange(0,1,interval): 
+        err_bin = [error_f220[f] for f in range(len(phases)) if phases[f] >= i and phases[f] <= (i+interval)]
+        #find residuals in bin1 
+        res_bin = [res[r] for r in range(len(phases)) if phases[r] >= i and phases[r] <= (i+interval)]
+        err_data_sqr = [err_bin[e]**2 for e in range(len(err_bin))]
+        ave_var_temp, i_var = inv_var(res_bin, err_data_sqr)
+        new_err = i_var**0.5
+        
+        ave_var.append(ave_var_temp)
+        err_prop.append(new_err)
        
+      res_avg = mean(res)
+      
+      #fit
+      params, params_covariance = optimize.curve_fit(fit_sin, phases, res)      
+      
       #plot
-      plt.errorbar(phase_bins, mean_stat.statistic, yerr=err_prop, fmt='*', capsize=4, label='Average Flux', ls='--', zorder=1,c='r')
-      plt.errorbar(phases, res, yerr=error_f220, fmt='o', capsize=4, label='Flux', zorder=0)
+      plt.errorbar(phase_bins, ave_var, yerr=err_prop, fmt='*', label='Inverse-Weighted Average Flux', ls='--', zorder=1)
+      plt.errorbar(phases, res, yerr=error_f220, fmt='o', label='Flux', zorder=0)
+      plt.axhline(y=res_avg, linestyle='-', label='Average Flux', zorder=0)      
+      plt.scatter(phases,fit_sin(phases, params[0], params[1]), label='Fitted Ftn.')      
       plt.title("Average phase number")
       plt.xlabel("Phase Number")
       plt.ylabel("Flux Residual (mJy)")
       plt.legend(loc='best')
       
     else:    
-      plt.errorbar(phases, res, yerr=error_f220, fmt='o', capsize=4, label='Flux at ' + freq, zorder=0)
+      plt.errorbar(phases, res, yerr=error_f220, fmt='o', label='Flux at ' + freq, zorder=0)
 
   else:
     print("No data for this frequency. Please select from 'f090, f150, or f220'") 
@@ -1232,7 +1221,7 @@ def period(name, arr, freq, period, directory = None, show = False):
   infile_f090.close()
   
   #get f150
-  infile_f150 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_f150.pk", 'rb')#open('/scratch/r/rbond/ricco/minorplanets/lcurve_data_f150.pk', 'rb')
+  infile_f150 = open("/gpfs/fs1/home/r/rbond/ricco/minorplanets/lcurve_data_f150.pk", 'rb')
   dict_f150 = pk.load(infile_f150)
   infile_f150.close()
     
@@ -1270,11 +1259,14 @@ def period(name, arr, freq, period, directory = None, show = False):
 #all_lcurves(show = True)
 #ratios(show = True)
 #lcurves("pa5", "f150", 3, show=True)
-#one_lcurve("Bamberga", "pa5", "f150", show=True, pickle=False)
-#one_lcurve_fit(show=True)
+#one_lcurve("Bamberga", "pa5", "f150", show=True)
+#one_lcurve_fit(name='Vesta', directory = "/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroids/light_curves/", show=True)
 #ratios(show=True) 
 #test_weights("Interamnia", "pa5", "f150", show=True)
-phases("Davida", 5.1297, "f220", show=True, average=True)
+phases("Vesta", 5.34212766, 5, "f090", show=True, average=True)
 #all_arrays("Pallas", "f150")
 #get_alpha("Pallas", "pa4", "f150", show=True)
-#period("Vesta", "pa5", "f220",5.34212766, show=True) 
+#period("Vesta", "pa5", "f220",5.34212766, show=True)
+
+#one_lcurve_fit(name="Hebe", show=True)
+#get_measured_flux('Vesta', 'pa5', '150')
