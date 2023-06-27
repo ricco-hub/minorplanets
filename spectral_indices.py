@@ -20,6 +20,7 @@ import ephem
 import scipy.signal as signal
 from palettable.colorbrewer.sequential import Blues_9
 from scipy.stats import binned_statistic
+from scipy import stats
 from statistics import mean
 import seaborn as sns
 import sys
@@ -65,7 +66,7 @@ def inv_var_weight(n,errs,x_data,y_data):
       
   for i in np.arange(min(x_data),max(x_data),interval):
     try: 
-      print(i)
+      #print(i)
       err_bin = []
       res_bin = []
       err_data_sqr = []
@@ -82,38 +83,38 @@ def inv_var_weight(n,errs,x_data,y_data):
       ave_var.append(ave_var_temp)
       err_prop.append(new_err)
     except ZeroDivisionError:
-      print('Zero Division Error')      
+      #print('Zero Division Error')      
       ave_var.append(np.nan)
       err_prop.append(np.nan)
       
   return ave_var, err_prop, bins
 
 def spec_fit(nu,alpha,A):
-  return A*(nu**(-1*alpha))
+  return A*(nu**(alpha))
 
-def light_curve(pas,freq):
+def light_curve(freq):
   '''
   Inputs:
-    pas, type: array, arrays for each frequency
-    freq, type: string, frequency of measurement
-    
+    freq, type: integer, frequency of ACT measurement
+    name, type: string, name of object
   Output:
-    Light curve using Jack's data
+    Return tuple of binned data in format [binned times, inverse-variance weighted flux average, propagated error, freq]
     
   '''
   pa_dict = {'090':['pa5', 'pa6'], '150':['pa4', 'pa5', 'pa6'], '220':['pa4']}
   name = 'Vesta'
-  #pas = [ 'pa5', 'pa4']
-  #freq = '150'
+  pas = ['pa4', 'pa5', 'pa6']
+  if freq == 90:
+    freq = '090'
+  else:
+    str(freq)
 
   flux = np.array([])
   times = np.array([])
   err = np.array([])
   F = np.array([])
-  phi = np.array([])
-  theta = np.array([])
-  alpha = np.array([])
   for pa in pas:
+    try:
       with open('/scratch/r/rbond/jorlo/actxminorplanets/sigurd/lightcurves/{}_lc_{}_{}_{}.pk'.format(name, 'night', pa, freq), 'rb') as f:
           lc_dict = pk.load(f)
   
@@ -125,48 +126,70 @@ def light_curve(pas,freq):
       times = np.hstack([times, np.array(cur_times)])
       
       err = np.hstack([err, np.array(lc_dict['err'])])
-      F = np.hstack([F, np.array(lc_dict['F'])])
+      F = np.hstack([F, np.array(lc_dict['F'])])      
+    except FileNotFoundError:
+      continue
   
   norm = np.mean(flux*F)
   flux = flux*F/norm
-  err = err*F/norm  
+  err = err*F/norm    
   
-  #fit
-  times,flux,err = zip(*sorted(zip(times,flux,err)))
-  params, params_covariance = optimize.curve_fit(spec_fit, times, flux, sigma=err,maxfev=10000)
-  perr = np.sqrt(np.diag(params_covariance))  
-  x = 150
-  y_fit = spec_fit(x, params[0], params[1])
-  
-  #binning
-  ave_var, err_prop, bins = inv_var_weight(50,err,times,flux)  
-  
-  #plot
-  #plt.errorbar(times, flux, yerr=err, fmt='o', label='Flux', zorder=0,alpha=0.3)
-  #plt.errorbar(bins, ave_var, yerr=err_prop, fmt='.', label='Bin Flux at {}'.format(freq), zorder=1, capsize=5, alpha=1)
-  plt.plot(times,y_fit, label='Spectral Indices', alpha=1)   
-  plt.tick_params(direction='in')
-  plt.xlabel("Time (MJD)")
-  #plt.ylabel("Normalized Flux")
-  plt.ylabel("Alpha")
-  #plt.title('Phase Curve of {name} at {freq}'.format(name=name,freq=freq))
-  plt.legend(loc='best')       
-  plt.show()
-  #plt.savefig("/gpfs/fs1/home/r/rbond/ricco/minorplanets/asteroids/light_curves/{name}_light_curve_all_{freq}.pdf".format(name=name, freq=freq))
+  if freq == '090':
+    freq = np.ndarray([90])
+  else:
+    freq = np.ndarray([int(freq)])
+    
+  freq = [freq for i in range(len(times))]      
+  tuple_data = [times,flux,err,freq]  
+  return min(times),max(times),times,flux,err,freq  
 
-def all_lcurves():
+def all_lcurves_stats(bin_number):
   '''
     Inputs:
-    Outputs: 
-      Inverse-variance weighted average 
+      bin_number, type: integer, number of bins
+    Outputs:  
   '''
+  min90,max90,f090_times,f090_flux,f090_err,f090_freq = light_curve(90)
+  min150,max150,f150_times,f150_flux,f150_err,f150_freq = light_curve(150)
+  min220,max220,f220_times,f220_flux,f220_err,f220_freq = light_curve(220)
   
-  light_curve(['pa5','pa6'],'090')
-  light_curve(['pa5','pa4'],'150')
-  light_curve(['pa4'],'220')
-  plt.show()
+  #find global minimum/maximum
+  min_bin = min(min90,min150,min220)
+  max_bin = max(max90,max150,max220)
+  
+  f090_sums,f090_edges,f090_index = stats.binned_statistic(f090_times,f090_flux,statistic='mean',bins=bin_number,range=(min_bin,max_bin))
+  f150_sums,f150_edges,f150_index = stats.binned_statistic(f150_times,f150_flux,statistic='mean',bins=bin_number,range=(min_bin,max_bin))
+  f220_sums,f220_edges,f220_index = stats.binned_statistic(f220_times,f220_flux,statistic='mean',bins=bin_number,range=(min_bin,max_bin))
+  
+  return f090_sums,f150_sums,f220_sums
 
+def spec_index():
+  '''
+  '''
+  f090_sums,f150_sums,f220_sums = all_lcurves_stats(50)
+  freq = [90,150,220]
+  indices = []
+  bins = []
+  for i in range(len(f090_sums)):
+    try:
+      flux = [f090_sums[i],f150_sums[i],f220_sums[i]]
+        
+      #fit
+      params, params_covariance = optimize.curve_fit(spec_fit, freq, flux,maxfev=10000)
+      perr = np.sqrt(np.diag(params_covariance))
+      alpha = params[0]
+      indices.append(alpha)
+      bins.append(i)
+    except ValueError:
+      continue
+      
+  plt.scatter(bins,indices)
+  plt.xlabel('Bin Number')
+  plt.ylabel('Spectral Index')
+  plt.show()  
+  
 ##############################RUN BELOW#################################################################################################################
-light_curve([ 'pa5', 'pa4'],'150')
-#all_lcurves()
-
+#light_curve(150)
+#all_lcurves_stats(50)
+#tuples()
+spec_index()
