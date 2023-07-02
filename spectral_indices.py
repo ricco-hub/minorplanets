@@ -73,17 +73,13 @@ def inv_var_weight(n,errs,x_data,y_data):
       
       err_bin = [errs[f] for f in range(len(x_data)) if x_data[f] > i and x_data[f] <= (i+interval)]
       res_bin = [y_data[r] for r in range(len(x_data)) if x_data[r] > i and x_data[r] <= (i+interval)]
-      #print('res_bin', res_bin)
       err_data_sqr = [err_bin[e]**2 for e in range(len(err_bin))]
-      #print('err_data_sqr', err_data_sqr)
       ave_var_temp, i_var = inv_var(res_bin, err_data_sqr)
       new_err = i_var**0.5
-      #print('new_err', new_err)
           
       ave_var.append(ave_var_temp)
       err_prop.append(new_err)
-    except ZeroDivisionError:
-      #print('Zero Division Error')      
+    except ZeroDivisionError:      
       ave_var.append(np.nan)
       err_prop.append(np.nan)
       
@@ -92,17 +88,20 @@ def inv_var_weight(n,errs,x_data,y_data):
 def spec_fit(nu,alpha,A):
   return A*(nu**(alpha))
 
-def light_curve(freq):
+def light_curve(name,freq):
   '''
   Inputs:
     freq, type: integer, frequency of ACT measurement
-    name, type: string, name of object
+    name, type: string, name of object (must be capitalized)
   Output:
-    Return tuple of binned data in format [binned times, inverse-variance weighted flux average, propagated error, freq]
-    
+    min(times), type: float, minimum time in data (i.e. start time)
+    max(times), type: float, maximum time in data (i.e. end time)
+    times, type: np.array, individual observation times (MJD)
+    flux, type: np.array, normalized flux of asteroid (arbitary units)
+    err, type: np.array, normalized error bar of each observation (arbitrary units)
+    freq, type: np.ndarray, frequency of observation (GHz)  
   '''
   pa_dict = {'090':['pa5', 'pa6'], '150':['pa4', 'pa5', 'pa6'], '220':['pa4']}
-  name = 'Vesta'
   pas = ['pa4', 'pa5', 'pa6']
   if freq == 90:
     freq = '090'
@@ -139,19 +138,21 @@ def light_curve(freq):
   else:
     freq = np.ndarray([int(freq)])
     
-  freq = [freq for i in range(len(times))]      
-  tuple_data = [times,flux,err,freq]  
+  #freq = [freq for i in range(len(times))]      
   return min(times),max(times),times,flux,err,freq  
 
-def all_lcurves_stats(bin_number):
+def all_lcurves_stats(name,bin_number):
   '''
     Inputs:
       bin_number, type: integer, number of bins
-    Outputs:  
+    Outputs:
+      f090_sums, type: float, mean of flux at 90 GHz
+      f150_sums, type: float, mean of flux at 150 GHz
+      f220_sums, type: float, mean of flux at 220 GHz
   '''
-  min90,max90,f090_times,f090_flux,f090_err,f090_freq = light_curve(90)
-  min150,max150,f150_times,f150_flux,f150_err,f150_freq = light_curve(150)
-  min220,max220,f220_times,f220_flux,f220_err,f220_freq = light_curve(220)
+  min90,max90,f090_times,f090_flux,f090_err,f090_freq = light_curve(name,90)
+  min150,max150,f150_times,f150_flux,f150_err,f150_freq = light_curve(name,150)
+  min220,max220,f220_times,f220_flux,f220_err,f220_freq = light_curve(name,220)
   
   #find global minimum/maximum
   min_bin = min(min90,min150,min220)
@@ -161,15 +162,22 @@ def all_lcurves_stats(bin_number):
   f150_sums,f150_edges,f150_index = stats.binned_statistic(f150_times,f150_flux,statistic='mean',bins=bin_number,range=(min_bin,max_bin))
   f220_sums,f220_edges,f220_index = stats.binned_statistic(f220_times,f220_flux,statistic='mean',bins=bin_number,range=(min_bin,max_bin))
   
-  return f090_sums,f150_sums,f220_sums
+  return f090_sums,f150_sums,f220_sums,min_bin,max_bin
 
-def spec_index():
+def spec_index(name,bin_number):
   '''
+    Inputs:
+      name, type: string, name of object (capitalized)
+      bin_number, type: integer, number of bins 
+    Outputs: 
+      Plot of spectral index vs. bin number
   '''
-  f090_sums,f150_sums,f220_sums = all_lcurves_stats(50)
+  f090_sums,f150_sums,f220_sums,min_bin,max_bin = all_lcurves_stats(name,bin_number)
   freq = [90,150,220]
   indices = []
-  bins = []
+  interval = (max_bin - min_bin)/bin_number
+  bins = np.arange(min_bin,max_bin,interval) 
+  #bins = []
   for i in range(len(f090_sums)):
     try:
       flux = [f090_sums[i],f150_sums[i],f220_sums[i]]
@@ -179,17 +187,20 @@ def spec_index():
       perr = np.sqrt(np.diag(params_covariance))
       alpha = params[0]
       indices.append(alpha)
-      bins.append(i)
+      #bins.append(i)
     except ValueError:
+      indices.append(np.nan)
       continue
-      
+            
   plt.scatter(bins,indices)
-  plt.xlabel('Bin Number')
+  plt.xlabel('Time (MJD)')
+  #plt.xlabel('Bin Number')
   plt.ylabel('Spectral Index')
+  plt.title('Spectral Index of {}'.format(name))
   plt.show()  
   
 ##############################RUN BELOW#################################################################################################################
 #light_curve(150)
 #all_lcurves_stats(50)
 #tuples()
-spec_index()
+spec_index('Vesta',50)
