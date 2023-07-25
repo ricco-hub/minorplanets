@@ -255,11 +255,10 @@ def all_lcurves_stats(name,bin_number):
   
   return f090_sums,f150_sums,f220_sums,min_bin,max_bin
 
-def phase_curve(name,freq):
+def phase_curve(name,freq,pas = ['pa4', 'pa5', 'pa6']):
   '''
   '''
   pa_dict = {'090':['pa5', 'pa6'], '150':['pa4', 'pa5', 'pa6'], '220':['pa4']}
-  pas = ['pa4', 'pa5', 'pa6']
   if freq == 90:
     freq = '090'
   else:
@@ -312,7 +311,7 @@ def phase_curve(name,freq):
   #freq = [freq for i in range(len(times))]      
   return min(eta),max(eta),eta,flux,err,freq
   
-def all_phase_stats(name,bin_number):
+def all_phase_stats(name,bin_number,pas = ['pa4', 'pa5', 'pa6']):
   '''
     Inputs:
       bin_number, type: integer, number of bins
@@ -382,6 +381,11 @@ def spec_index(name,bin_number,x_axis):
   return bins, indices
    
 def spec_flux(name,bins,freq):
+  '''
+    Inputs
+    Outputs
+      Combined plot of spectral index and flux against time
+  '''
   spec_bins, indices = spec_index(name,bins,'phase')
   min_eta,max_eta,eta,flux,err,ignore_freq = phase_curve(name,freq)
   ave_var, err_prop, phase_bins = inv_var_weight(bins,min_eta,max_eta,err,eta,flux)
@@ -399,9 +403,84 @@ def spec_flux(name,bins,freq):
   ax2.legend(flux_plot + spec_plot, flux_labels + spec_labels, loc='best')
   plt.show()
   
+def spec_index_arr(name,bin_number,pas):
+  '''
+    Inputs:
+      name, type: string, name of object (capitalized)
+      bin_number, type: integer, number of bins 
+      x_axis, type: string, plot spectral index against 'time' or 'phase'
+      pas, type: string array, ACT array
+    Outputs: 
+      Plot of spectral index over different arrays vs. bin number
+  '''
+  f090_var,f090_err,f150_var,f150_err,f220_var,f220_err,min_bin_phase,max_bin_phase = all_phase_stats(name,bin_number,pas)
+  #f090_sums,f150_sums,f220_sums,min_bin_time,max_bin_time = all_lcurves_stats(name,bin_number)
+  indices = []
+  if pas == ['pa4']:
+    freq = [150,220]
+    for i in range(bin_number):
+      try:
+        flux = [f150_var[i],f220_var[i]]
+        err = [f150_err[i],f220_err[i]]
+        
+        #fit
+        params, params_covariance = optimize.curve_fit(spec_fit, freq, flux, sigma=err, maxfev=100000)
+        perr = np.sqrt(np.diag(params_covariance))
+        alpha = params[0]
+        indices.append(alpha)
+      except ValueError:
+        indices.append(np.nan)
+        continue  
+  else:
+    freq = [90,150]
+    for i in range(bin_number):
+      try:
+        flux = [f090_var[i],f150_var[i]]
+        err = [f090_err[i],f150_err[i]]
+        
+        #fit
+        params, params_covariance = optimize.curve_fit(spec_fit, freq, flux, sigma=err, maxfev=100000)
+        perr = np.sqrt(np.diag(params_covariance))
+        alpha = params[0]
+        indices.append(alpha)
+      except ValueError:
+        indices.append(np.nan)
+        continue  
+          
+  #if x_axis == 'time':
+  #  interval = (max_bin_time - min_bin_time)/bin_number
+  #  bins = np.arange(min_bin_time,max_bin_time,interval) 
+    
+  #  plt.xlabel('Time (MJD)')
+  interval = (max_bin_phase - min_bin_phase)/bin_number
+  bins = np.arange(min_bin_phase,max_bin_phase,interval)
+    
+  #plt.xlabel('Phase')     
+  #plt.scatter(bins,indices)
+  #plt.ylabel('Spectral Index')
+  #plt.title('Spectral Index of {}'.format(name))
+  #plt.show()  
+  
+  return bins, indices  
+ 
+ 
+def plot_spec_index_arr(name,bin_number):
+  bins_pa4, indices_pa4 = spec_index_arr(name,bin_number,pas=['pa4'])
+  bins_pa5, indices_pa5 = spec_index_arr(name,bin_number,pas=['pa5'])
+  bins_pa6, indices_pa6 = spec_index_arr(name,bin_number,pas=['pa6'])
+  
+  plt.xlabel('Phase')     
+  plt.scatter(bins_pa4,indices_pa4,label='pa4')
+  plt.scatter(bins_pa5,indices_pa5,label='pa5')
+  plt.scatter(bins_pa6,indices_pa6,label='pa6')
+  plt.ylabel('Spectral Index')
+  plt.title('Spectral Index of {} Across Arrays'.format(name))
+  plt.legend(loc='best')  
+  plt.show()    
 ##############################RUN BELOW#################################################################################################################
 #light_curve(150)
 #all_lcurves_stats(50)
 #tuples()
-#spec_index('Vesta',20,'phase')
-spec_flux('Hebe',20,220)
+#spec_index('Hebe',20,'phase')
+#spec_flux('Hebe',20,220)
+plot_spec_index_arr('Hebe',20)
