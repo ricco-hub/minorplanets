@@ -309,7 +309,7 @@ def phase_curve(name,freq,pas = ['pa4', 'pa5', 'pa6']):
     freq = np.ndarray([int(freq)])
     
   #freq = [freq for i in range(len(times))]      
-  return min(eta),max(eta),eta,flux,err,freq
+  return max(eta,default=1),eta,flux,err,freq
   
 def all_phase_stats(name,bin_number,pas = ['pa4', 'pa5', 'pa6']):
   '''
@@ -320,13 +320,13 @@ def all_phase_stats(name,bin_number,pas = ['pa4', 'pa5', 'pa6']):
       f150_sums, type: float, mean of flux at 150 GHz
       f220_sums, type: float, mean of flux at 220 GHz
   '''
-  min90,max90,f090_phase,f090_flux,f090_err,f090_freq = phase_curve(name,90)
-  min150,max150,f150_phase,f150_flux,f150_err,f150_freq = phase_curve(name,150)
-  min220,max220,f220_phase,f220_flux,f220_err,f220_freq = phase_curve(name,220)
+  max90,f090_phase,f090_flux,f090_err,f090_freq = phase_curve(name,90,pas)
+  max150,f150_phase,f150_flux,f150_err,f150_freq = phase_curve(name,150,pas)
+  max220,f220_phase,f220_flux,f220_err,f220_freq = phase_curve(name,220,pas)
   
   #find global minimum/maximum
-  min_bin = min(min90,min150,min220)
-  max_bin = max(max90,max150,max220)
+  min_bin = 0
+  max_bin = max((max90,max150,max220), default=1)
   
   f090_var,f090_err_prop,f090_bins = inv_var_weight(bin_number,min_bin,max_bin,f090_err,f090_phase,f090_flux)
   f150_var,f150_err_prop,f150_bins = inv_var_weight(bin_number,min_bin,max_bin,f150_err,f150_phase,f150_flux)
@@ -470,9 +470,9 @@ def plot_spec_index_arr(name,bin_number):
   bins_pa6, indices_pa6 = spec_index_arr(name,bin_number,pas=['pa6'])
   
   plt.xlabel('Phase')     
-  plt.scatter(bins_pa4,indices_pa4,label='pa4')
-  plt.scatter(bins_pa5,indices_pa5,label='pa5')
-  plt.scatter(bins_pa6,indices_pa6,label='pa6')
+  plt.scatter(bins_pa4,indices_pa4,label='pa4', color='r')
+  plt.scatter(bins_pa5,indices_pa5,label='pa5', color='g')
+  plt.scatter(bins_pa6,indices_pa6,label='pa6', color='b')
   plt.ylabel('Spectral Index')
   plt.title('Spectral Index of {} Across Arrays'.format(name))
   plt.legend(loc='best')  
