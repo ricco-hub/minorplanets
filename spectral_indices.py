@@ -1,3 +1,4 @@
+#%% 
 import argparse, os
 import numpy as np, ephem
 from numpy.lib import recfunctions
@@ -16,6 +17,7 @@ import pickle as pk
 import pandas as pd
 from astroquery.jplhorizons import Horizons
 from astropy.time import Time
+from typing import List
 import ephem
 import scipy.signal as signal
 from palettable.colorbrewer.sequential import Blues_9
@@ -29,7 +31,7 @@ from scipy.stats import chi2
 from operator import add
 sns.set_theme(style='ticks')
 
-def inv_var(data, variances):
+def inv_var(data: List[float], variances: List[float]):
   '''
     Inputs
       data, type: array of ints/floats, data to be weighted
@@ -44,10 +46,10 @@ def inv_var(data, variances):
     var += 1/variances[i]
   return ave/var, 1/var    
 
-def inv_var_weight(n,min_bin,max_bin,errs,x_data,y_data):
+def inv_var_weight(n: int,min_bin: int,max_bin: int,errs: List[float],x_data: List[float],y_data: List[float]):
   '''
     Inputs
-      n, type: integer, number of weighted bins
+      n, number of weighted bins
       errs, type: float, errors for binning
       x_data, type: float, x data to be binned 
       y_data, type: float, y data to be binned 
@@ -85,16 +87,16 @@ def inv_var_weight(n,min_bin,max_bin,errs,x_data,y_data):
       
   return ave_var, err_prop, bins
 
-def spec_fit(nu,alpha,A):
+def spec_fit(nu:float, alpha:float, A:float) -> float:
   return A*(nu**(alpha))
   
-def rot_phase(name,times):
+def rot_phase(name:str, times:List[float]) -> float:
   '''
     Inputs
-      name, type: string, name of asteroid
+      name, name of asteroid
       times, type: float, observation times of asteroid in MJD
     Outputs
-      phi, type: float, phase numbers for rotation period of asteroid
+      phi, phase numbers for rotation period of asteroid
   '''
   period = get_period(name)
   
@@ -108,10 +110,10 @@ def rot_phase(name,times):
     
   return phi  
   
-def orb_phase(name,times):
+def orb_phase(name:str, times:List[float]):
   '''
     Inputs
-      name, type: string, name of asteroid
+      name, name of asteroid
       obs, type: floats, observation times (MJD) of asteroid
     Output
       Theta, type: float, array of phase numbers for asteroid orbital period
@@ -132,13 +134,13 @@ def orb_phase(name,times):
   
   return theta, T
   
-def sunang_phase(name,times):
+def sunang_phase(name:str,times:List[float]) -> float:
   '''
     Inputs
-      name, type: string, name of asteroid
+      name, name of asteroid
       times, type: float, times of asteroid observations in MJD
     Outputs
-      alpha, type: float, solar phase angle between 0 to 1
+      alpha, solar phase angle between 0 to 1
   '''
   alpha = []
   
@@ -158,10 +160,10 @@ def sunang_phase(name,times):
    
   return (alpha/180)    
 
-def get_period(name):
+def get_period(name:str) -> float:
   '''
     Input
-      name, type: string, capitalized name of object we want rotation period of
+      name, capitalized name of object we want rotation period of
     Output
       Rotation period of object name
   '''
@@ -178,7 +180,7 @@ def get_period(name):
   period = obj.json()['phys_par'][ind]['value']
   return float(period)
 
-def light_curve(name,freq):
+def light_curve(name:str, freq:str):
   '''
   Inputs:
     freq, type: integer, frequency of ACT measurement
@@ -231,7 +233,7 @@ def light_curve(name,freq):
   #freq = [freq for i in range(len(times))]      
   return min(times),max(times),times,flux,err,freq  
 
-def all_lcurves_stats(name,bin_number):
+def all_lcurves_stats(name:str, bin_number:int):
   '''
     Inputs:
       name, type: string, name of object/asteroid
@@ -255,7 +257,7 @@ def all_lcurves_stats(name,bin_number):
   
   return f090_sums,f150_sums,f220_sums,min_bin,max_bin
 
-def phase_curve(name,freq,pas = ['pa4', 'pa5', 'pa6']):
+def phase_curve(name:str, freq:int, pas = ['pa4', 'pa5', 'pa6']):
   '''
   '''
   pa_dict = {'090':['pa5', 'pa6'], '150':['pa4', 'pa5', 'pa6'], '220':['pa4']}
@@ -311,7 +313,7 @@ def phase_curve(name,freq,pas = ['pa4', 'pa5', 'pa6']):
   #freq = [freq for i in range(len(times))]      
   return max(eta,default=1),eta,flux,err,freq
   
-def all_phase_stats(name,bin_number,pas = ['pa4', 'pa5', 'pa6']):
+def all_phase_stats(name:str, bin_number:int, pas = ['pa4', 'pa5', 'pa6']):
   '''
     Inputs:
       bin_number, type: integer, number of bins
@@ -334,12 +336,12 @@ def all_phase_stats(name,bin_number,pas = ['pa4', 'pa5', 'pa6']):
   
   return f090_var,f090_err_prop,f150_var,f150_err_prop,f220_var,f220_err_prop,min_bin,max_bin
 
-def spec_index(name,bin_number,x_axis):
+def spec_index(name:str, bin_number:int, x_axis:str):
   '''
     Inputs:
-      name, type: string, name of object (capitalized)
-      bin_number, type: integer, number of bins 
-      x_axis, type: string, plot spectral index against 'time' or 'phase'
+      name, name of object (capitalized)
+      bin_number, number of bins 
+      x_axis, plot spectral index against 'time' or 'phase'
     Outputs: 
       Plot of spectral index vs. bin number
   '''
@@ -380,7 +382,7 @@ def spec_index(name,bin_number,x_axis):
   
   return bins, indices
    
-def spec_flux(name,bins,freq):
+def spec_flux(name:str, bins:List[float], freq:int):
   '''
     Inputs
     Outputs
@@ -403,18 +405,17 @@ def spec_flux(name,bins,freq):
   ax2.legend(flux_plot + spec_plot, flux_labels + spec_labels, loc='best')
   plt.show()
   
-def spec_index_arr(name,bin_number,pas):
+def spec_index_arr(name:str, bin_number:int, pas:List[str]):
   '''
     Inputs:
-      name, type: string, name of object (capitalized)
-      bin_number, type: integer, number of bins 
+      name, name of object (capitalized)
+      bin_number, number of bins 
       x_axis, type: string, plot spectral index against 'time' or 'phase'
-      pas, type: string array, ACT array
+      pas, ACT array
     Outputs: 
       Plot of spectral index over different arrays vs. bin number
   '''
   f090_var,f090_err,f150_var,f150_err,f220_var,f220_err,min_bin_phase,max_bin_phase = all_phase_stats(name,bin_number,pas)
-  #f090_sums,f150_sums,f220_sums,min_bin_time,max_bin_time = all_lcurves_stats(name,bin_number)
   indices = []
   if pas == ['pa4']:
     freq = [150,220]
@@ -447,40 +448,37 @@ def spec_index_arr(name,bin_number,pas):
         indices.append(np.nan)
         continue  
           
-  #if x_axis == 'time':
-  #  interval = (max_bin_time - min_bin_time)/bin_number
-  #  bins = np.arange(min_bin_time,max_bin_time,interval) 
-    
-  #  plt.xlabel('Time (MJD)')
   interval = (max_bin_phase - min_bin_phase)/bin_number
   bins = np.arange(min_bin_phase,max_bin_phase,interval)
     
-  #plt.xlabel('Phase')     
-  #plt.scatter(bins,indices)
-  #plt.ylabel('Spectral Index')
-  #plt.title('Spectral Index of {}'.format(name))
-  #plt.show()  
-  
   return bins, indices  
  
- 
-def plot_spec_index_arr(name,bin_number):
+def plot_spec_index_arr(name:str, bin_number:int):
+  '''
+    Inputs
+      name, name of asteroid/object
+      bin_number, number of binned data points
+    Output
+      Plot of spectral index calculated for each array
+  '''
+  
   bins_pa4, indices_pa4 = spec_index_arr(name,bin_number,pas=['pa4'])
   bins_pa5, indices_pa5 = spec_index_arr(name,bin_number,pas=['pa5'])
   bins_pa6, indices_pa6 = spec_index_arr(name,bin_number,pas=['pa6'])
   
   plt.xlabel('Phase')     
-  plt.scatter(bins_pa4,indices_pa4,label='pa4', color='r')
-  plt.scatter(bins_pa5,indices_pa5,label='pa5', color='g')
-  plt.scatter(bins_pa6,indices_pa6,label='pa6', color='b')
+  plt.scatter(bins_pa4,indices_pa4,label='pa4')
+  plt.scatter(bins_pa5,indices_pa5,label='pa5')
+  plt.scatter(bins_pa6,indices_pa6,label='pa6')
   plt.ylabel('Spectral Index')
   plt.title('Spectral Index of {} Across Arrays'.format(name))
   plt.legend(loc='best')  
   plt.show()    
-##############################RUN BELOW#################################################################################################################
+
+###############################RUN BELOW#################################################################################################################
 #light_curve(150)
 #all_lcurves_stats(50)
 #tuples()
 #spec_index('Hebe',20,'phase')
 #spec_flux('Hebe',20,220)
-plot_spec_index_arr('Hebe',20)
+plot_spec_index_arr('Eunomia',20)
